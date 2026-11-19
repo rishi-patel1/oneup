@@ -12,8 +12,10 @@ import type { Session, SessionAction } from './game/session';
 import type { GeneratedPuzzle } from './game/generator';
 import { addGeneratedPuzzle, formatPuzzleCode, persistGeneratedLibrary, readGeneratedPuzzles } from './game/generatedLibrary';
 import NewPuzzleForm from './components/NewPuzzleForm';
+import BrandMark from './components/BrandMark';
+import { APP_NAME, STORAGE_PREFIX } from './branding';
 
-const STORAGE = 'oneup:v1:';
+const STORAGE = STORAGE_PREFIX;
 type Preferences = { theme: 'light' | 'dark'; autoCheck: boolean; notesMode: boolean };
 type Modal = 'help' | 'reset' | 'new' | null;
 
@@ -325,9 +327,9 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="site-header" inert={collectionOpen}>
-        <a className="brand" href="#" aria-label="One Up home" onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
-          <span className="brand-mark"><Grid2X2 size={25} strokeWidth={2} /><span>1</span></span>
-          <span>one<span className="brand-up">up</span><span className="brand-period">.</span></span>
+        <a className="brand" href="#" aria-label={`${APP_NAME} home`} onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+          <span className="brand-mark"><BrandMark /></span>
+          <span>{APP_NAME}<span className="brand-period">.</span></span>
         </a>
         <nav aria-label="Main navigation">
           <button className="nav-link active" onClick={() => boardRef.current?.querySelector<HTMLButtonElement>(`[data-cell="${selected}"]`)?.focus()}>Play</button>
@@ -343,7 +345,7 @@ export default function App() {
 
       <main>
         <section className="page-intro" aria-label="Welcome" inert={collectionOpen}>
-          <div><div className="eyebrow"><span /> A LITTLE LOGIC. A LITTLE FOCUS.</div><h1>Room for a little <em>one up.</em></h1><p>Fill the spaces. Find your rhythm. One number at a time.</p></div>
+          <div><div className="eyebrow"><span /> A LITTLE LOGIC. A LITTLE FOCUS.</div><h1>A moment of <em>clarity.</em></h1><p>Fill the spaces. Find your rhythm. One number at a time.</p></div>
           <div className="intro-actions"><button className="primary-button new-puzzle-launch" onClick={() => setModal('new')}><Sparkles size={17} /> New puzzle</button><div className="collection-count"><span className="count-icon"><Trophy size={22} /></span><div><strong>{completed}<span> / {PUZZLES.length}</span></strong><span>starter puzzles completed</span></div></div></div>
         </section>
 
@@ -435,10 +437,10 @@ export default function App() {
 
       <div className={`toast ${message ? 'show' : ''}`} role="status" aria-live="polite">{message && <><span className="toast-icon"><Lightbulb size={17} /></span><span>{message}</span><button aria-label="Dismiss message" onClick={() => setMessage('')}><X size={16} /></button></>}</div>
 
-      <dialog ref={dialogRef} className="modal" aria-label={modal === 'new' ? 'New puzzle' : modal === 'reset' ? 'Restart puzzle' : 'How to play One Up'} onCancel={() => setModal(null)} onClick={e => { if (e.target === e.currentTarget) setModal(null); }}>
+      <dialog ref={dialogRef} className="modal" aria-label={modal === 'new' ? 'New puzzle' : modal === 'reset' ? 'Restart puzzle' : `How to play ${APP_NAME}`} onCancel={() => setModal(null)} onClick={e => { if (e.target === e.currentTarget) setModal(null); }}>
         <div className="modal-inner"><button className="icon-button modal-close" aria-label="Close dialog" onClick={() => setModal(null)}><X size={21} /></button>
           {modal === 'new' ? <NewPuzzleForm initialSize={puzzle.size} initialDifficulty={puzzle.difficulty} onGenerated={startGeneratedPuzzle} onCancel={() => setModal(null)} /> : modal === 'reset' ? <><span className="modal-symbol"><RotateCcw size={26} /></span><div className="eyebrow">A CLEAN SLATE</div><h2>Start this one again?</h2><p>This clears your entries, notes, and time for <strong>{puzzle.title}</strong>. Your other puzzles stay saved.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setModal(null)}>Keep playing</button><button className="primary-button" onClick={reset}>Restart puzzle</button></div></>
-            : <><span className="modal-symbol"><Grid2X2 size={27} /></span><div className="eyebrow">SIMPLE RULES. HAPPY BRAIN.</div><h2>A little guide to One Up.</h2><p>Fill every cell. Each horizontal and vertical segment between thick walls must contain every number from <strong>1 through its length</strong>, exactly once.</p><div className="help-examples"><div><div className="rule-example single"><span>1</span></div><span>One space</span></div><div><div className="rule-example"><span>2</span><span>1</span><span>3</span></div><span>Three spaces</span></div></div><p>Every cell belongs to an across segment <em>and</em> a down segment. Its number must work in both. Underlined numbers are fixed clues.</p><div className="help-shortcuts"><h3>Make yourself at home.</h3><p><Pencil size={17} /><span><strong>Notes</strong> let you pencil in possibilities. Tap N to switch, or hold Shift while pressing a number to add or remove a note.</span></p><p><Lightbulb size={17} /><span><strong>Hint</strong> fills one cell. <strong>Check</strong> crosses out incorrect entries.</span></p><p><Pause size={17} /><span>The clock starts on your first entry. <strong>Pause</strong> hides the board and stops the clock. Switching tabs pauses too.</span></p><p><span className="arrow-icons"><ArrowLeft size={12} /><ArrowUp size={12} /><ArrowDown size={12} /><ArrowRight size={12} /></span><span><strong>Arrow keys</strong> move. Numbers fill. Backspace clears. ⌘/Ctrl Z undoes.</span></p></div><button className="primary-button full-width" onClick={() => setModal(null)}>Got it. Let’s play.</button></>}
+            : <><span className="modal-symbol"><Grid2X2 size={27} /></span><div className="eyebrow">SIMPLE RULES. HAPPY BRAIN.</div><h2>A little guide to {APP_NAME}.</h2><p>Fill every cell. Each horizontal and vertical segment between thick walls must contain every number from <strong>1 through its length</strong>, exactly once.</p><div className="help-examples"><div><div className="rule-example single"><span>1</span></div><span>One space</span></div><div><div className="rule-example"><span>2</span><span>1</span><span>3</span></div><span>Three spaces</span></div></div><p>Every cell belongs to an across segment <em>and</em> a down segment. Its number must work in both. Underlined numbers are fixed clues.</p><div className="help-shortcuts"><h3>Make yourself at home.</h3><p><Pencil size={17} /><span><strong>Notes</strong> let you pencil in possibilities. Tap N to switch, or hold Shift while pressing a number to add or remove a note.</span></p><p><Lightbulb size={17} /><span><strong>Hint</strong> fills one cell. <strong>Check</strong> crosses out incorrect entries.</span></p><p><Pause size={17} /><span>The clock starts on your first entry. <strong>Pause</strong> hides the board and stops the clock. Switching tabs pauses too.</span></p><p><span className="arrow-icons"><ArrowLeft size={12} /><ArrowUp size={12} /><ArrowDown size={12} /><ArrowRight size={12} /></span><span><strong>Arrow keys</strong> move. Numbers fill. Backspace clears. ⌘/Ctrl Z undoes.</span></p></div><button className="primary-button full-width" onClick={() => setModal(null)}>Got it. Let’s play.</button></>}
         </div>
       </dialog>
     </div>

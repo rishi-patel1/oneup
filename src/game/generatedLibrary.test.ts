@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { generatePuzzle } from './generator';
-import { addGeneratedPuzzle, formatPuzzleCode, parsePuzzleCode, persistGeneratedLibrary, readGeneratedPuzzles, RECENT_PUZZLE_LIMIT } from './generatedLibrary';
+import { addGeneratedPuzzle, formatPuzzleCode, isPuzzleCode, parsePuzzleCode, persistGeneratedLibrary, readGeneratedPuzzles, RECENT_PUZZLE_LIMIT } from './generatedLibrary';
 
 test('puzzle codes roundtrip settings including Unicode and delimiters in the seed', () => {
   const puzzle = generatePuzzle({ size: 5, difficulty: 'Easy', seed: 'café: tea / 1' });
@@ -9,6 +9,20 @@ test('puzzle codes roundtrip settings including Unicode and delimiters in the se
   for (const bad of ['oneup:99:5:easy:seed', 'oneup:1:4:easy:seed', 'oneup:1:5:easy:%', 'not-a-code']) {
     assert.equal(parsePuzzleCode(bad), null);
   }
+});
+
+test('Numora codes and legacy One Up codes reproduce the same board and saved-game identity', () => {
+  const options = { size: 6 as const, difficulty: 'Medium' as const, seed: 'rename-check' };
+  const original = generatePuzzle(options);
+  const code = formatPuzzleCode(original);
+  assert.equal(code, 'numora:1:6:medium:rename-check');
+  assert.equal(isPuzzleCode(code), true);
+  assert.equal(isPuzzleCode('oneup:1:6:medium:rename-check'), true);
+  const legacyOptions = parsePuzzleCode('oneup:1:6:medium:rename-check');
+  assert.deepEqual(legacyOptions, parsePuzzleCode(code));
+  assert.deepEqual(generatePuzzle(legacyOptions!), original);
+  assert.equal(isPuzzleCode('numora-coffee'), false);
+  assert.equal(parsePuzzleCode('other:1:6:medium:rename-check'), null);
 });
 
 test('restoration rejects malformed boards and mismatched generation metadata', () => {

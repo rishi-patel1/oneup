@@ -1,6 +1,6 @@
-# One Up, locally
+# Numora
 
-A solo browser puzzle game inspired by [One Up](https://oneuppuzzle.com/), created by Rodolfo Kurchan. Play six original starter boards or generate new puzzles on demand. No boards or solutions were copied from the reference game.
+**A moment of clarity.** Numora is a solo browser number puzzle game inspired by [One Up](https://oneuppuzzle.com/), created by Rodolfo Kurchan. Play six original starter boards or generate new puzzles on demand. No boards or solutions were copied from the reference game.
 
 ## Run locally
 
@@ -19,6 +19,10 @@ npm run build    # TypeScript check and production build in dist/
 npm run preview  # Serve the production build locally
 ```
 
+## Deploy
+
+Numora is a static Vite app and needs **no environment variables, API keys, or backend**. Use `npm run build` as the build command and publish the entire `dist/` directory, including its assets and generator worker. No `.env` file is required. Use Node.js 22 or newer for the build. Multiplayer will need server configuration when that feature is added.
+
 ## Play
 
 Fill every cell. Each horizontal and vertical segment between thick walls must contain every number from **1 through its length**, exactly once. A cell must satisfy both its across segment and its down segment. Underlined numbers are fixed clues.
@@ -36,10 +40,10 @@ Click **New puzzle**, choose a size from **5×5 through 8×8** and **Easy, Mediu
 The same **generator version, size, difficulty, and normalized seed** reproduce the same walls, clues, solution, and rating. Seed normalization trims surrounding whitespace and normalizes Unicode. Use **Copy puzzle code** below a generated grid to copy all four reproduction settings together, for example:
 
 ```text
-oneup:1:6:medium:my-seed
+numora:1:6:medium:my-seed
 ```
 
-Paste a code into the **Seed or puzzle code** field in New puzzle to recreate its board. Seeds containing spaces, Unicode, or delimiters are encoded automatically. Codes from unsupported generator versions are rejected rather than silently producing a different board.
+Paste a code into the **Seed or puzzle code** field in New puzzle to recreate its board. Seeds containing spaces, Unicode, or delimiters are encoded automatically. Legacy `oneup:` codes are still accepted and use the same generated board IDs. Existing browser saves retain their original storage namespace, so the Numora rename preserves progress. Codes from unsupported generator versions are rejected rather than silently producing a different board.
 
 The **last 12 generated puzzles and their progress** are saved in this browser on this device and appear under Your recent puzzles. Returning to a recent board—or recreating its code—resumes its saved progress. Creating a thirteenth different puzzle expires the oldest cached board and its progress to keep storage bounded. Its code can still recreate the original board with a fresh session. Copying a code shares the puzzle settings, not your entries or solve time.
 
@@ -59,10 +63,12 @@ These are technique-based estimates, not human-calibrated ratings. They reflect 
 
 `GENERATOR_VERSION` must be incremented whenever the generation algorithm, PRNG, or rating rules change. Reproducible codes depend on that contract; keep old implementations if older codes need continued support.
 
-The current 61-test suite covers rules, contradiction and search-budget handling, uniqueness, reproduction, difficulty, library restoration and expiry, and play sessions. A development-machine benchmark generated **240/240** requested boards across 20 seeds × four sizes × three difficulties, taking **1–269 ms** per board. This measurement is not a browser performance guarantee.
+The current 62-test suite covers rules, contradiction and search-budget handling, uniqueness, reproduction and legacy-code compatibility, difficulty, library restoration and expiry, and play sessions. A development-machine benchmark generated **240/240** requested boards across 20 seeds × four sizes × three difficulties, taking **1–269 ms** per board. This measurement is not a browser performance guarantee.
 
 ## Code layout
 
+- `src/branding.ts` — product name, puzzle code prefixes, and the compatible saved-game namespace.
+- `src/components/BrandMark.tsx` — Numora's N monogram.
 - `src/game/engine.ts` — wall segmentation, candidates, conflicts, completion, and puzzle integrity checks.
 - `src/game/puzzles.ts` — original starter puzzle definitions, stable IDs, walls, clues, and solutions.
 - `src/game/solver.ts` — bounded solution counting and deterministic deduction-based difficulty analysis.

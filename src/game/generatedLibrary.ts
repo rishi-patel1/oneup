@@ -1,5 +1,6 @@
 import { verifyPuzzle, type Difficulty } from './engine';
 import { GENERATOR_VERSION, getGeneratedPuzzleId, normalizeSeed, type GeneratedPuzzle, type GenerationOptions } from './generator';
+import { LEGACY_PUZZLE_CODE_PREFIX, PUZZLE_CODE_PREFIX } from '../branding';
 
 export const RECENT_PUZZLE_LIMIT = 12;
 const DIFFICULTIES: Difficulty[] = ['Easy', 'Medium', 'Hard'];
@@ -53,12 +54,16 @@ export function persistGeneratedLibrary(storage: Pick<Storage, 'setItem' | 'remo
 }
 
 export function formatPuzzleCode(puzzle: GeneratedPuzzle): string {
-  return `oneup:${puzzle.generation.version}:${puzzle.size}:${puzzle.difficulty.toLowerCase()}:${encodeURIComponent(puzzle.generation.seed)}`;
+  return `${PUZZLE_CODE_PREFIX}:${puzzle.generation.version}:${puzzle.size}:${puzzle.difficulty.toLowerCase()}:${encodeURIComponent(puzzle.generation.seed)}`;
+}
+
+export function isPuzzleCode(text: string): boolean {
+  return [PUZZLE_CODE_PREFIX, LEGACY_PUZZLE_CODE_PREFIX].includes(text.trim().split(':')[0].toLowerCase()) && text.includes(':');
 }
 
 export function parsePuzzleCode(text: string): GenerationOptions | null {
-  const match = /^oneup:([^:]+):([5-8]):(easy|medium|hard):(.+)$/i.exec(text.trim());
-  if (!match || match[1] !== GENERATOR_VERSION) return null;
+  const match = /^[^:]+:([^:]+):([5-8]):(easy|medium|hard):(.+)$/i.exec(text.trim());
+  if (!match || !isPuzzleCode(text) || match[1] !== GENERATOR_VERSION) return null;
   try {
     const difficulty = DIFFICULTIES.find(level => level.toLowerCase() === match[3].toLowerCase())!;
     return { size: Number(match[2]) as GenerationOptions['size'], difficulty, seed: normalizeSeed(decodeURIComponent(match[4])) };

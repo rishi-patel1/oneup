@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { LoaderCircle, Sparkles } from 'lucide-react';
 import type { Difficulty } from '../game/engine';
 import { normalizeSeed, type GeneratedPuzzle, type GenerationOptions } from '../game/generator';
-import { parsePuzzleCode, randomSeed, readGeneratedPuzzles } from '../game/generatedLibrary';
+import { isPuzzleCode, parsePuzzleCode, randomSeed, readGeneratedPuzzles } from '../game/generatedLibrary';
 import type { GenerationRequest, GenerationResponse } from '../game/generationProtocol';
 
 interface Props {
@@ -50,7 +50,7 @@ export default function NewPuzzleForm({ initialSize, initialDifficulty, onGenera
     let options: GenerationOptions;
     try {
       const text = seed.trim();
-      if (/^oneup:/i.test(text)) {
+      if (isPuzzleCode(text)) {
         const parsed = parsePuzzleCode(text);
         if (!parsed) throw new Error('That puzzle code is invalid or uses a different generator version.');
         options = parsed;
