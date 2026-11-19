@@ -1,0 +1,10 @@
+project_id = "numora"
+
+[functions.numora-create-room]
+verify_jwt = true
+entrypoint = "./functions/numora-create-room/index.ts"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:5173"
+enable_anonymous_sign_ins = true

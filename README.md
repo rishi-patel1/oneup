@@ -1,6 +1,6 @@
 # Numora
 
-**A moment of clarity.** Numora is a solo browser number puzzle game inspired by [One Up](https://oneuppuzzle.com/), created by Rodolfo Kurchan. Play six original starter boards or generate new puzzles on demand. No boards or solutions were copied from the reference game.
+**A moment of clarity.** Numora is a browser number puzzle game inspired by [One Up](https://oneuppuzzle.com/), created by Rodolfo Kurchan. Play six original starter boards, generate new puzzles on demand, or race friends in a private room. No boards or solutions were copied from the reference game.
 
 ## Run locally
 
@@ -14,14 +14,36 @@ npm run dev
 Open the local URL printed by Vite. Other commands:
 
 ```sh
-npm test          # Rules, generation, uniqueness, saved-library, and session tests
+npm test          # Game, multiplayer client, Edge Function, and local Postgres tests
 npm run build    # TypeScript check and production build in dist/
 npm run preview  # Serve the production build locally
 ```
 
 ## Deploy
 
-Numora is a static Vite app and needs **no environment variables, API keys, or backend**. Use `npm run build` as the build command and publish the entire `dist/` directory, including its assets and generator worker. No `.env` file is required. Use Node.js 22 or newer for the build. Multiplayer will need server configuration when that feature is added.
+Use `npm run build` as the build command and publish the entire `dist/` directory, including its assets and generator worker. Use Node.js 22 or newer. Solo play works without environment variables or a backend.
+
+Competition uses Supabase. Set these **public browser variables** in `.env.local` for local development, and in your hosting provider's build environment for deployment:
+
+```dotenv
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_key
+```
+
+Copy `.env.example` as a starting point. Restart Vite after changing variables; rebuild and redeploy when changing production variables. Never put a service-role or secret key in a `VITE_` variable. The hosted Edge Function uses Supabase's built-in server credentials.
+
+## Supabase setup
+
+1. Create a Supabase project and enable **Allow anonymous sign-ins** in **Authentication → Sign In / Providers**. Players receive a guest identity without entering an email or password.
+2. Apply the SQL in `supabase/migrations/` in timestamp order using your Supabase migration workflow. The initial migration creates room/player tables, private puzzle/progress tables, server RPCs, row-level security, and member-only Realtime policies.
+3. Run `npm run supabase:sync` before deploying `numora-create-room`. Deploy the files in `supabase/functions/`, including the function's `deno.json` and `_shared` dependencies. The installed Supabase CLI or Supabase connector can deploy it. The JavaScript SDK is pinned to the same exact version in npm and the Edge import map.
+4. Set the two browser variables above and restart/rebuild the app. Create a room, then join from a second browser profile or device to test separate guest identities.
+
+`supabase/config.toml` enables anonymous sign-ins for a **local** Supabase instance; it does not change the hosted project's Auth setting. Keep `supabase/` at the repository root if using Supabase's GitHub integration with working directory `.`. Avoid applying the same initial migration manually and through GitHub under different migration versions.
+
+The server generates competition puzzles with a private random seed. Neither the solution nor its reproducible seed is sent to players. Public tables contain only room settings and leaderboard information; each participant can retrieve only their own saved entries. RPCs enforce membership, readiness, clues, board rules, and server-calculated finish times. Database constraints and RPC permissions are covered by local Postgres tests (`npm run test:backend`); these tests do not require Docker or a live project.
+
+Supabase's advisor may flag [guest-access policies](https://supabase.com/docs/guides/database/database-advisors?queryGroups=lint&lint=0012_auth_allow_anonymous_sign_ins): these intentionally admit signed-in guests **only to their own rooms**. Private tables intentionally have [RLS enabled with no policies](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy), denying direct client access; the scoped server functions access them. These findings do not require opening the private tables.
 
 ## Play
 
@@ -29,7 +51,7 @@ Fill every cell. Each horizontal and vertical segment between thick walls must c
 
 The starter collection spans 5×5 through 8×8 boards. Every starter puzzle has exactly one solution, checked by an independent solver in the tests. Starter difficulty labels are initial estimates.
 
-Features include pencil notes, undo/redo, hints, mistake checking, a pauseable timer, per-puzzle saved progress, dark mode, responsive layouts, and keyboard and touch controls. Progress is stored in this browser on this device; it does not sync between devices. Hints and checks are counted separately from solve time.
+Solo features include pencil notes, undo/redo, hints, mistake checking, a pauseable timer, per-puzzle saved progress, dark mode, responsive layouts, and keyboard and touch controls. Solo progress is stored in this browser on this device; it does not sync between devices. Hints and checks are counted separately from solve time.
 
 Use arrow keys to move, number keys to enter, Backspace/Delete to clear, **N** to toggle notes, and **⌘/Ctrl Z** to undo (**Shift** to redo). Hold **Shift** to temporarily enable notes: Shift + a number adds or removes that note, and releasing Shift restores your notes setting. **Show mistakes** and **Check** mark only visible rule conflicts with a full-cell cross: numbers outside `1..segment length`, or duplicate numbers within an across/down segment. A legal guess is never marked merely because it differs from the stored answer. Repeats separated by thick walls are allowed, fixed clues never receive crosses, and pencil notes are not checked. All digits from `1..board size` can be entered so you can explore your own deductions. The timer starts on the first entry or note. Switching tabs or opening help pauses the game.
 
@@ -63,7 +85,7 @@ These are technique-based estimates, not human-calibrated ratings. They reflect 
 
 `GENERATOR_VERSION` must be incremented whenever the generation algorithm, PRNG, or rating rules change. Reproducible codes depend on that contract; keep old implementations if older codes need continued support.
 
-The current 65-test suite covers visible-rule mistake marking, contradiction and search-budget handling, uniqueness, reproduction and legacy-code compatibility, difficulty, library restoration and expiry, and play sessions. A development-machine benchmark generated **240/240** requested boards across 20 seeds × four sizes × three difficulties, taking **1–269 ms** per board. This measurement is not a browser performance guarantee.
+The game tests cover visible-rule mistake marking, contradiction and search-budget handling, uniqueness, reproduction and legacy-code compatibility, difficulty, library restoration and expiry, and play sessions. A development-machine benchmark generated **240/240** requested boards across 20 seeds × four sizes × three difficulties, taking **1–269 ms** per board. This measurement is not a browser performance guarantee.
 
 ## Code layout
 
@@ -80,9 +102,19 @@ The current 65-test suite covers visible-rule mistake marking, contradiction and
 - `src/components/NewPuzzleForm.tsx` — size, difficulty, and seed/code controls, generation status, errors, and cancellation.
 - `src/App.tsx` — game interface, controls, timer lifecycle, and browser storage.
 - `src/styles.css` — responsive layout and light/dark themes.
+- `src/components/CompetitionPage.tsx` and `competition.css` — room lobby, synchronized countdown, race board, and results.
+- `src/multiplayer/` — guest identity, room RPCs, defensive response parsing, and live subscriptions.
+- `supabase/migrations/` — private data model, permissions, and authoritative race operations.
+- `supabase/functions/numora-create-room/` — authenticated server puzzle generation and room creation.
+- `scripts/sync-supabase-generator.mjs` — copies the canonical generator into the Edge runtime with explicit Deno imports.
+- `tests/sql/` and `tests/edge/` — database access-control/race checks and the room-creation HTTP contract.
 
-## Next steps
+## Compete with friends
 
-The current version is **solo only**. Live multiplayer is the next phase.
+Choose **Compete**, enter a nickname, and create a room with a board size and difficulty. Share its six-character code or invitation link. A room supports **2–8 players**. Everyone marks themselves ready, then the host starts a five-second countdown. The board is released at the shared server start time.
 
-For live competitions, have the server assign every player the same puzzle seed/version and control the start, submissions, and elapsed-time calculation. Define whether hints and checks are allowed and how they affect scoring. Verify submitted boards against the rules on the server; never trust the client timer or client-supplied solution. Current browser saves and timers are intended for solo play, not competitive verification.
+Players see the same puzzle and each other's filled-cell counts, while entries and notes remain private. Notes and undo/redo work during races; hints, mistake checking, and pausing are unavailable. A complete valid board is submitted automatically, with a manual retry available. The server validates the board and records elapsed time; fastest valid finish ranks first. Repeated submissions preserve the original finish time. Switching tabs or returning to solo does not stop the race clock.
+
+Refresh or reopen the invitation in the **same browser profile** to reconnect. Private progress syncs to the server, and unsent edits are also stored locally for reconnection. Keep the browser's guest session: clearing storage or switching devices creates a different identity and cannot recover an existing race entry. New players cannot enter after the countdown starts; existing members can reconnect. Explicitly leaving a lobby removes the player and transfers the host if needed; leaving a started race retains its history and clock.
+
+This version supports casual private races. It does not include accounts, cross-device recovery, public matchmaking, tournaments, or bot prevention. Server timing and hidden answers prevent trusting a client-supplied score; they cannot prevent a player from using an external solver.

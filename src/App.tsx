@@ -14,6 +14,7 @@ import { addGeneratedPuzzle, formatPuzzleCode, persistGeneratedLibrary, readGene
 import NewPuzzleForm from './components/NewPuzzleForm';
 import BrandMark from './components/BrandMark';
 import { APP_NAME, STORAGE_PREFIX } from './branding';
+import CompetitionPage from './components/CompetitionPage';
 
 const STORAGE = STORAGE_PREFIX;
 type Preferences = { theme: 'light' | 'dark'; autoCheck: boolean; notesMode: boolean };
@@ -59,6 +60,7 @@ function firstOpen(puzzle: Puzzle, values: number[]) {
 }
 
 export default function App() {
+  const [view, setView] = useState<'solo' | 'compete'>(() => new URLSearchParams(window.location.search).has('room') ? 'compete' : 'solo');
   const [puzzle, setPuzzle] = useState(initialPuzzle);
   const [session, setSession] = useState<Session>(() => loadSession(initialPuzzle()));
   const [selected, setSelected] = useState(() => firstOpen(puzzle, session.values));
@@ -90,7 +92,7 @@ export default function App() {
   const editable = puzzle.givens.filter(v => !v).length;
   const entered = session.values.filter((value, i) => value && !puzzle.givens[i]).length;
   const progress = editable ? Math.round(entered / editable * 100) : 100;
-  const isPlaying = session.status === 'playing';
+  const isPlaying = session.status === 'playing' && view === 'solo';
   const notesMode = preferences.notesMode || shiftHeld;
   const hasStarted = session.elapsedMs > 0 || session.history.length > 0 || session.future.length > 0;
   const currentIndex = PUZZLES.findIndex(p => p.id === puzzle.id);
@@ -279,7 +281,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (modal || collectionOpen || event.isComposing) return;
+      if (view !== 'solo' || modal || collectionOpen || event.isComposing) return;
       const target = event.target as HTMLElement;
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable) return;
       if (event.metaKey || event.ctrlKey) {
@@ -315,7 +317,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [modal, collectionOpen, dispatch, enterNumber, selected, puzzle, isPlaying, preferences.notesMode]);
+  }, [view, modal, collectionOpen, dispatch, enterNumber, selected, puzzle, isPlaying, preferences.notesMode]);
 
   const reset = () => {
     dispatch({ type: 'reset', puzzle });
@@ -323,6 +325,13 @@ export default function App() {
     setModal(null);
     notify('A fresh start. You’ve got this.');
   };
+
+  if (view === 'compete') return <CompetitionPage onSolo={() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    setView('solo');
+  }} />;
 
   return (
     <div className="app-shell">
@@ -332,8 +341,9 @@ export default function App() {
           <span>{APP_NAME}<span className="brand-period">.</span></span>
         </a>
         <nav aria-label="Main navigation">
-          <button className="nav-link active" onClick={() => boardRef.current?.querySelector<HTMLButtonElement>(`[data-cell="${selected}"]`)?.focus()}>Play</button>
-          <button className="nav-link" onClick={() => setModal('help')}>How to play</button>
+          <button className="nav-link active" onClick={() => boardRef.current?.querySelector<HTMLButtonElement>(`[data-cell="${selected}"]`)?.focus()}>Solo</button>
+          <button className="nav-link" onClick={() => { dispatch({ type: 'pause' }); setView('compete'); }}>Compete</button>
+          <button className="nav-link howto-nav" aria-label="How to play" onClick={() => setModal('help')}><CircleHelp className="nav-help-icon" size={20} /><span>How to play</span></button>
         </nav>
         <div className="header-actions">
           <span className="local-tag"><span /> Your little logic break</span>
