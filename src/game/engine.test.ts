@@ -109,10 +109,35 @@ test('candidates use both segments and ignore the selected cell’s old value', 
   assert.deepEqual(getCandidates(latin, values, 50), []);
 });
 
-test('mistake checking differs from immediate rule conflict detection', () => {
+test('mistake markers ignore a legal partial guess even when it differs from the answer', () => {
   const values = [1, 3, 0, 0, 0, 0, 0, 0, 0];
   assert.equal(getConflicts(latin, values).size, 0);
-  assert.deepEqual([...getMistakes(latin, values)], [1]);
+  assert.notEqual(values[1], latin.solution[1]);
+  assert.deepEqual([...getMistakes(latin, values)], []);
+  assert.deepEqual([...getMistakes({ ...latin, solution: Array(9).fill(0) }, values)], []);
+});
+
+test('duplicate markers cover both editable peers but never an immutable clue', () => {
+  assert.deepEqual([...getMistakes(latin, [1, 1, 0, 0, 0, 0, 0, 0, 0])], [1]);
+  assert.deepEqual([...getMistakes(latin, [1, 0, 0, 1, 0, 0, 0, 0, 0])], [3]);
+  const values = [1, 0, 0, 2, 2, 0, 0, 0, 0];
+  assert.deepEqual([...getMistakes(latin, values)].sort(), [3, 4]);
+  assert.deepEqual([...getMistakes({ ...latin, solution: [...values] }, values)].sort(), [3, 4]);
+});
+
+test('a number fitting across is marked if too large down, and vice versa', () => {
+  const verticalLimit: Puzzle = { ...latin, givens: Array(9).fill(0), bottomWalls: [false, true, ...Array(7).fill(false)] };
+  assert.equal(getCellLimit(verticalLimit, 1), 1);
+  assert.deepEqual([...getMistakes(verticalLimit, [0, 2, 0, 0, 0, 0, 0, 0, 0])], [1]);
+  const horizontalLimit: Puzzle = { ...latin, givens: Array(9).fill(0), rightWalls: [true, ...Array(8).fill(false)] };
+  assert.equal(getCellLimit(horizontalLimit, 0), 1);
+  assert.deepEqual([...getMistakes(horizontalLimit, [2, 0, 0, 0, 0, 0, 0, 0, 0])], [0]);
+});
+
+test('repeats in different wall-delimited segments and empty cells have no mistake marker', () => {
+  const separate: Puzzle = { ...latin, givens: Array(9).fill(0), rightWalls: Array(9).fill(true), bottomWalls: Array(9).fill(true) };
+  assert.deepEqual([...getMistakes(separate, Array(9).fill(1))], []);
+  assert.deepEqual([...getMistakes(separate, Array(9).fill(0))], []);
 });
 
 test('completion rejects blanks, malformed values, broken clues, and invalid runs', () => {

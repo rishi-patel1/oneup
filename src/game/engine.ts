@@ -82,13 +82,9 @@ export function getConflicts(puzzle: Puzzle, values: number[]): Set<number> {
   return conflicts;
 }
 
+/** Mark editable cells that break a visible rule, without consulting the answer. */
 export function getMistakes(puzzle: Puzzle, values: number[]): Set<number> {
-  return new Set(
-    puzzle.solution.flatMap((answer, index) => {
-      const value = values[index] ?? 0;
-      return value !== 0 && value !== answer ? [index] : [];
-    }),
-  );
+  return new Set([...getConflicts(puzzle, values)].filter(index => !puzzle.givens[index]));
 }
 
 export function isSolved(puzzle: Puzzle, values: number[]): boolean {

@@ -4,7 +4,7 @@ import {
   ChevronRight, CircleHelp, Clock3, Copy, Eraser, Grid2X2, Lightbulb, Moon,
   Pause, Pencil, Play, Redo2, RotateCcw, Sparkles, Sun, Trophy, Undo2, X,
 } from 'lucide-react';
-import { getCellLimit, getMistakes, getSegments, isSolved } from './game/engine';
+import { getMistakes, getSegments, isSolved } from './game/engine';
 import { PUZZLES } from './game/puzzles';
 import { createSession, restoreSession, serializeSession, sessionReducer } from './game/session';
 import type { Puzzle } from './game/engine';
@@ -248,8 +248,8 @@ export default function App() {
 
   const enterNumber = useCallback((value: number, asNote = notesMode) => {
     if (!isPlaying || puzzle.givens[selected]) return;
-    if (value > getCellLimit(puzzle, selected)) {
-      notify(`This cell can only hold 1–${getCellLimit(puzzle, selected)}. Count the spaces between walls.`);
+    if (value > puzzle.size) {
+      notify(`This board uses numbers 1–${puzzle.size}.`);
       return;
     }
     if (asNote) dispatch({ type: 'toggle-note', puzzle, index: selected, value });
@@ -273,8 +273,8 @@ export default function App() {
     dispatch({ type: 'check' });
     setChecked(true);
     notify(mistakes.size
-      ? `${mistakes.size} ${mistakes.size === 1 ? 'cell needs' : 'cells need'} another look. They’re marked on the board.`
-      : `Everything entered looks good.${filled < puzzle.size ** 2 ? ' Keep going!' : ''}`);
+      ? `${mistakes.size} ${mistakes.size === 1 ? 'cell has' : 'cells have'} a rule conflict. They’re crossed on the board.`
+      : `No rule conflicts found so far.${filled < puzzle.size ** 2 ? ' Keep exploring.' : ''}`);
   };
 
   useEffect(() => {
@@ -385,7 +385,7 @@ export default function App() {
                       const across = segments.rows.find(run => run.includes(index))!;
                       const down = segments.columns.find(run => run.includes(index))!;
                       const segmentLabel = `Across segment: columns ${across[0] % puzzle.size + 1} to ${across[across.length - 1] % puzzle.size + 1}, use 1 through ${across.length}. Down segment: rows ${Math.floor(down[0] / puzzle.size) + 1} to ${Math.floor(down[down.length - 1] / puzzle.size) + 1}, use 1 through ${down.length}.`;
-                      return <button key={index} role="gridcell" data-cell={index} aria-rowindex={row + 1} aria-colindex={col + 1} aria-selected={selected === index} aria-readonly={given} aria-invalid={wrong || undefined} aria-label={`Row ${row + 1}, column ${col + 1}, ${value || 'empty'}${given ? ', fixed clue' : ''}${session.notes[index].length && !value ? `, notes ${session.notes[index].join(', ')}` : ''}${wrong ? ', incorrect' : ''}. ${segmentLabel}`} tabIndex={selected === index ? 0 : -1} disabled={session.status === 'paused'} onClick={() => setSelected(index)} className={`cell ${given ? 'given' : ''} ${peers.has(index) ? 'peer' : ''} ${selected === index ? 'selected' : ''} ${wrong ? 'incorrect' : ''} ${value && value === session.values[selected] ? 'same-value' : ''}`} style={{ borderRightWidth: col === puzzle.size - 1 ? 0 : puzzle.rightWalls[index] ? 3 : 1, borderBottomWidth: row === puzzle.size - 1 ? 0 : puzzle.bottomWalls[index] ? 3 : 1, borderRightColor: puzzle.rightWalls[index] ? 'var(--grid)' : 'var(--cell-line)', borderBottomColor: puzzle.bottomWalls[index] ? 'var(--grid)' : 'var(--cell-line)' }}>
+                      return <button key={index} role="gridcell" data-cell={index} aria-rowindex={row + 1} aria-colindex={col + 1} aria-selected={selected === index} aria-readonly={given} aria-invalid={wrong || undefined} aria-label={`Row ${row + 1}, column ${col + 1}, ${value || 'empty'}${given ? ', fixed clue' : ''}${session.notes[index].length && !value ? `, notes ${session.notes[index].join(', ')}` : ''}${wrong ? ', rule conflict' : ''}. ${segmentLabel}`} tabIndex={selected === index ? 0 : -1} disabled={session.status === 'paused'} onClick={() => setSelected(index)} className={`cell ${given ? 'given' : ''} ${peers.has(index) ? 'peer' : ''} ${selected === index ? 'selected' : ''} ${wrong ? 'incorrect' : ''} ${value && value === session.values[selected] ? 'same-value' : ''}`} style={{ borderRightWidth: col === puzzle.size - 1 ? 0 : puzzle.rightWalls[index] ? 3 : 1, borderBottomWidth: row === puzzle.size - 1 ? 0 : puzzle.bottomWalls[index] ? 3 : 1, borderRightColor: puzzle.rightWalls[index] ? 'var(--grid)' : 'var(--cell-line)', borderBottomColor: puzzle.bottomWalls[index] ? 'var(--grid)' : 'var(--cell-line)' }}>
                         {value ? <span className="cell-value">{value}</span> : <span className="cell-notes" aria-hidden="true">{Array.from({ length: Math.max(6, puzzle.size) }, (_, n) => <span key={n}>{session.notes[index].includes(n + 1) ? n + 1 : ''}</span>)}</span>}
                         {wrong && <svg className="cell-mistake-cross" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="M0 0 100 100M100 0 0 100" vectorEffect="non-scaling-stroke" /></svg>}
                       </button>;
@@ -402,7 +402,7 @@ export default function App() {
             {session.status === 'completed' ? <div className="completion-panel"><div className="completion-title"><span><Trophy size={22} /></span><div><h3>A lovely bit of logic.</h3><p>Solved in {formatTime(session.elapsedMs)} · {session.hintsUsed} {session.hintsUsed === 1 ? 'hint' : 'hints'} · {session.checksUsed} {session.checksUsed === 1 ? 'check' : 'checks'}</p></div></div><button className="primary-button" onClick={() => generated ? setModal('new') : currentIndex < PUZZLES.length - 1 ? selectPuzzle(PUZZLES[currentIndex + 1]) : setModal('reset')}>{generated ? 'Create another puzzle' : currentIndex < PUZZLES.length - 1 ? 'Try the next puzzle' : 'Play this one again'}<ChevronRight size={17} /></button></div>
               : <>
                 <div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Number pad">
-                  {Array.from({ length: puzzle.size }, (_, i) => i + 1).map(n => <button key={n} onClick={event => enterNumber(n, preferences.notesMode || event.shiftKey)} disabled={!isPlaying || Boolean(puzzle.givens[selected]) || n > getCellLimit(puzzle, selected)} className={notesMode ? 'note-key' : ''} aria-label={`${notesMode ? 'Toggle note' : 'Enter'} ${n}`}>{n}</button>)}
+                  {Array.from({ length: puzzle.size }, (_, i) => i + 1).map(n => <button key={n} onClick={event => enterNumber(n, preferences.notesMode || event.shiftKey)} disabled={!isPlaying || Boolean(puzzle.givens[selected])} className={notesMode ? 'note-key' : ''} aria-label={`${notesMode ? 'Toggle note' : 'Enter'} ${n}`}>{n}</button>)}
                 </div>
                 <div className="game-tools" aria-label="Puzzle tools">
                   <button disabled={!isPlaying || !session.history.length} title="Undo (⌘/Ctrl Z)" onClick={() => dispatch({ type: 'undo' })}><Undo2 size={19} /><span>Undo</span></button>
@@ -422,7 +422,7 @@ export default function App() {
               <div className="eyebrow">ONE CELL AT A TIME</div><h2>{session.status === 'completed' ? 'Nicely done.' : 'You’re making space.'}</h2><p>{puzzle.description}</p>
               <div className="progress-label"><span>Your progress</span><strong>{progress}%</strong></div><div className="progress-track" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label="Puzzle progress"><span style={{ width: `${progress}%` }} /></div><p className="progress-detail">{entered} of {editable} empty cells filled</p>
               <div className="session-divider" />
-              <label className="switch-label"><span><strong>Show mistakes</strong><span>A little help along the way</span></span><input type="checkbox" checked={preferences.autoCheck} onChange={e => setPreference('autoCheck', e.target.checked)} /><span className="switch" aria-hidden="true" /></label>
+              <label className="switch-label"><span><strong>Show mistakes</strong><span>Repeats and segment limits</span></span><input type="checkbox" checked={preferences.autoCheck} onChange={e => setPreference('autoCheck', e.target.checked)} /><span className="switch" aria-hidden="true" /></label>
               {generated && <div className="generated-rating"><span className="eyebrow">DIFFICULTY ESTIMATE</span><strong>{generated.generation.rating.difficulty}</strong><p>{generated.generation.rating.guesses ? 'This solver needed branching after its logical deductions.' : generated.generation.rating.nakedPairs ? 'Solving needs pairs as well as single placements.' : generated.generation.rating.hiddenSingles ? 'Look for numbers with only one possible home in a segment.' : 'Direct placements can lead you all the way through.'}</p></div>}
             </section>
 
@@ -440,7 +440,7 @@ export default function App() {
       <dialog ref={dialogRef} className="modal" aria-label={modal === 'new' ? 'New puzzle' : modal === 'reset' ? 'Restart puzzle' : `How to play ${APP_NAME}`} onCancel={() => setModal(null)} onClick={e => { if (e.target === e.currentTarget) setModal(null); }}>
         <div className="modal-inner"><button className="icon-button modal-close" aria-label="Close dialog" onClick={() => setModal(null)}><X size={21} /></button>
           {modal === 'new' ? <NewPuzzleForm initialSize={puzzle.size} initialDifficulty={puzzle.difficulty} onGenerated={startGeneratedPuzzle} onCancel={() => setModal(null)} /> : modal === 'reset' ? <><span className="modal-symbol"><RotateCcw size={26} /></span><div className="eyebrow">A CLEAN SLATE</div><h2>Start this one again?</h2><p>This clears your entries, notes, and time for <strong>{puzzle.title}</strong>. Your other puzzles stay saved.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setModal(null)}>Keep playing</button><button className="primary-button" onClick={reset}>Restart puzzle</button></div></>
-            : <><span className="modal-symbol"><Grid2X2 size={27} /></span><div className="eyebrow">SIMPLE RULES. HAPPY BRAIN.</div><h2>A little guide to {APP_NAME}.</h2><p>Fill every cell. Each horizontal and vertical segment between thick walls must contain every number from <strong>1 through its length</strong>, exactly once.</p><div className="help-examples"><div><div className="rule-example single"><span>1</span></div><span>One space</span></div><div><div className="rule-example"><span>2</span><span>1</span><span>3</span></div><span>Three spaces</span></div></div><p>Every cell belongs to an across segment <em>and</em> a down segment. Its number must work in both. Underlined numbers are fixed clues.</p><div className="help-shortcuts"><h3>Make yourself at home.</h3><p><Pencil size={17} /><span><strong>Notes</strong> let you pencil in possibilities. Tap N to switch, or hold Shift while pressing a number to add or remove a note.</span></p><p><Lightbulb size={17} /><span><strong>Hint</strong> fills one cell. <strong>Check</strong> crosses out incorrect entries.</span></p><p><Pause size={17} /><span>The clock starts on your first entry. <strong>Pause</strong> hides the board and stops the clock. Switching tabs pauses too.</span></p><p><span className="arrow-icons"><ArrowLeft size={12} /><ArrowUp size={12} /><ArrowDown size={12} /><ArrowRight size={12} /></span><span><strong>Arrow keys</strong> move. Numbers fill. Backspace clears. ⌘/Ctrl Z undoes.</span></p></div><button className="primary-button full-width" onClick={() => setModal(null)}>Got it. Let’s play.</button></>}
+            : <><span className="modal-symbol"><Grid2X2 size={27} /></span><div className="eyebrow">SIMPLE RULES. HAPPY BRAIN.</div><h2>A little guide to {APP_NAME}.</h2><p>Fill every cell. Each horizontal and vertical segment between thick walls must contain every number from <strong>1 through its length</strong>, exactly once.</p><div className="help-examples"><div><div className="rule-example single"><span>1</span></div><span>One space</span></div><div><div className="rule-example"><span>2</span><span>1</span><span>3</span></div><span>Three spaces</span></div></div><p>Every cell belongs to an across segment <em>and</em> a down segment. Its number must work in both. Underlined numbers are fixed clues.</p><div className="help-shortcuts"><h3>Make yourself at home.</h3><p><Pencil size={17} /><span><strong>Notes</strong> let you pencil in possibilities. Tap N to switch, or hold Shift while pressing a number to add or remove a note.</span></p><p><Lightbulb size={17} /><span><strong>Hint</strong> fills one cell. <strong>Check</strong> marks repeated numbers and numbers that don’t fit their segment. Legal guesses stay unmarked.</span></p><p><Pause size={17} /><span>The clock starts on your first entry. <strong>Pause</strong> hides the board and stops the clock. Switching tabs pauses too.</span></p><p><span className="arrow-icons"><ArrowLeft size={12} /><ArrowUp size={12} /><ArrowDown size={12} /><ArrowRight size={12} /></span><span><strong>Arrow keys</strong> move. Numbers fill. Backspace clears. ⌘/Ctrl Z undoes.</span></p></div><button className="primary-button full-width" onClick={() => setModal(null)}>Got it. Let’s play.</button></>}
         </div>
       </dialog>
     </div>

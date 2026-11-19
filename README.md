@@ -31,7 +31,7 @@ The starter collection spans 5×5 through 8×8 boards. Every starter puzzle has 
 
 Features include pencil notes, undo/redo, hints, mistake checking, a pauseable timer, per-puzzle saved progress, dark mode, responsive layouts, and keyboard and touch controls. Progress is stored in this browser on this device; it does not sync between devices. Hints and checks are counted separately from solve time.
 
-Use arrow keys to move, number keys to enter, Backspace/Delete to clear, **N** to toggle notes, and **⌘/Ctrl Z** to undo (**Shift** to redo). Hold **Shift** to temporarily enable notes: Shift + a number adds or removes that note, and releasing Shift restores your notes setting. Checked mistakes have a full-cell cross. The timer starts on the first entry or note. Switching tabs or opening help pauses the game.
+Use arrow keys to move, number keys to enter, Backspace/Delete to clear, **N** to toggle notes, and **⌘/Ctrl Z** to undo (**Shift** to redo). Hold **Shift** to temporarily enable notes: Shift + a number adds or removes that note, and releasing Shift restores your notes setting. **Show mistakes** and **Check** mark only visible rule conflicts with a full-cell cross: numbers outside `1..segment length`, or duplicate numbers within an across/down segment. A legal guess is never marked merely because it differs from the stored answer. Repeats separated by thick walls are allowed, fixed clues never receive crosses, and pencil notes are not checked. All digits from `1..board size` can be entered so you can explore your own deductions. The timer starts on the first entry or note. Switching tabs or opening help pauses the game.
 
 ## Generate a puzzle
 
@@ -63,7 +63,7 @@ These are technique-based estimates, not human-calibrated ratings. They reflect 
 
 `GENERATOR_VERSION` must be incremented whenever the generation algorithm, PRNG, or rating rules change. Reproducible codes depend on that contract; keep old implementations if older codes need continued support.
 
-The current 62-test suite covers rules, contradiction and search-budget handling, uniqueness, reproduction and legacy-code compatibility, difficulty, library restoration and expiry, and play sessions. A development-machine benchmark generated **240/240** requested boards across 20 seeds × four sizes × three difficulties, taking **1–269 ms** per board. This measurement is not a browser performance guarantee.
+The current 65-test suite covers visible-rule mistake marking, contradiction and search-budget handling, uniqueness, reproduction and legacy-code compatibility, difficulty, library restoration and expiry, and play sessions. A development-machine benchmark generated **240/240** requested boards across 20 seeds × four sizes × three difficulties, taking **1–269 ms** per board. This measurement is not a browser performance guarantee.
 
 ## Code layout
 
