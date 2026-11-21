@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { generatePuzzle } from '../../src/game/generator';
+import { getConflicts } from '../../src/game/engine';
 
 type State = {
   room: { id: string; code: string; host_id: string; status: string; starts_at: string | null };
@@ -18,13 +19,11 @@ const OUTSIDER = '00000000-0000-4000-8000-000000000003';
 const LATE = '00000000-0000-4000-8000-000000000004';
 const puzzle = generatePuzzle({ size: 5, difficulty: 'Easy', seed: 'competition-sql-test' });
 const notes = Array.from({ length: 25 }, () => [] as number[]);
-const migration = readFileSync(new URL('../../supabase/migrations/20261119140624_numora_competition.sql', import.meta.url), 'utf8');
+const migrationDirectory = new URL('../../supabase/migrations/', import.meta.url);
+const migration = readdirSync(migrationDirectory).filter(name => name.endsWith('.sql')).sort()
+  .map(name => readFileSync(new URL(name, migrationDirectory), 'utf8')).join('\n');
 
-test('competition SQL: authorization, hidden boards, race rules, persistence, and timing', async t => {
-  const db = new PGlite();
-  try {
-    // Minimal platform fixtures: the migration itself runs unchanged.
-    await db.exec(`
+const platformSql = `
       create role anon; create role authenticated; create role service_role;
       create schema auth;
       create table auth.users(id uuid primary key);
@@ -40,7 +39,13 @@ test('competition SQL: authorization, hidden boards, race rules, persistence, an
       create function realtime.topic() returns text language sql stable as $$
         select current_setting('realtime.topic',true);
       $$;
-    `);
+    `;
+
+test('competition SQL: authorization, hidden boards, race rules, persistence, and timing', async t => {
+  const db = new PGlite();
+  try {
+    // Minimal platform fixtures: the migration itself runs unchanged.
+    await db.exec(platformSql);
     await db.exec(migration);
     for (const id of [HOST, GUEST, OUTSIDER, LATE]) await db.query('insert into auth.users(id) values($1)', [id]);
 
@@ -229,6 +234,137 @@ test('competition SQL: authorization, hidden boards, race rules, persistence, an
       await assert.rejects(asRole('service_role', null, () => db.query('select public.numora_create_room($1,$2,$3::jsonb)', [HOST, 'Host', JSON.stringify(missingDescription)])), /integrity checks/);
       const params = await db.query<{ args: string }>("select pg_get_function_arguments('public.numora_submit_solution(text,integer[],jsonb)'::regprocedure) as args");
       assert.equal(/elapsed|finished|start/i.test(params.rows[0].args), false);
+    });
+  } finally { await db.close(); }
+});
+
+test('post-finish spectating is authorized by the server and never grants write or puzzle-secret access', async t => {
+  const db = new PGlite();
+  try {
+    await db.exec(platformSql);
+    await db.exec(migration);
+    for (const id of [HOST, GUEST, OUTSIDER, LATE]) await db.query('insert into auth.users(id) values($1)', [id]);
+    const asRole = async <T>(role: 'authenticated' | 'anon' | 'service_role', id: string | null, operation: () => Promise<T>) => {
+      await db.query("select set_config('request.jwt.claim.sub',$1,false)", [id ?? '']);
+      await db.exec(`set role ${role}`);
+      try { return await operation(); }
+      finally { await db.exec('reset role'); await db.query("select set_config('request.jwt.claim.sub','',false)"); }
+    };
+    const user = <T>(id: string, operation: () => Promise<T>) => asRole('authenticated', id, operation);
+    const create = async (host: string, name: string) => asRole('service_role', null, async () =>
+      (await db.query<{ code: string }>('select public.numora_create_room($1,$2,$3::jsonb) as code', [host, name, JSON.stringify(puzzle)])).rows[0].code);
+    const code = await create(HOST, 'Viewer');
+    const otherCode = await create(OUTSIDER, 'Other room host');
+    await user(GUEST, () => db.query('select public.numora_join_room($1,$2)', [code, 'Target']));
+    const roomId = (await db.query<{ id: string }>('select id from public.numora_rooms where code=$1', [code])).rows[0].id;
+    type SpectatorState = { room_id: string; player_id: string; values: number[]; notes: number[][]; updated_at: string; server_now: string };
+    const watch = async (roomCode: string, target: string | null) =>
+      (await db.query<{ data: SpectatorState }>('select public.numora_spectate_player($1,$2::uuid) as data', [roomCode, target])).rows[0].data;
+
+    await t.test('anonymous, missing-auth, outsider, and unfinished viewers are denied', async () => {
+      await assert.rejects(asRole('anon', null, () => watch(code, GUEST)), /permission denied/);
+      await assert.rejects(asRole('authenticated', null, () => watch(code, GUEST)), /Sign in before/);
+      await assert.rejects(user(OUTSIDER, () => watch(code, GUEST)), /Join this room before spectating/);
+      await assert.rejects(user(HOST, () => watch(code, GUEST)), /Finish your puzzle before/);
+      await assert.rejects(user(GUEST, () => watch(code, HOST)), /Finish your puzzle before/);
+    });
+
+    await user(HOST, () => db.query('select public.numora_set_ready($1,true)', [code]));
+    await user(GUEST, () => db.query('select public.numora_set_ready($1,true)', [code]));
+    await user(HOST, () => db.query('select public.numora_start_room($1)', [code]));
+
+    await t.test('even a recorded finish cannot release progress before the shared start', async () => {
+      // A trusted fixture isolates the clock gate; real finish RPCs already reject early submissions.
+      await db.query('update public.numora_players set finished_at=clock_timestamp(),elapsed_ms=0 where room_id=$1 and user_id=$2', [roomId, HOST]);
+      await assert.rejects(user(HOST, () => watch(code, GUEST)), /race has not started yet/);
+      await db.query('update public.numora_players set finished_at=null,elapsed_ms=null where room_id=$1 and user_id=$2', [roomId, HOST]);
+      await db.query("update public.numora_rooms set starts_at=clock_timestamp()-interval '12 seconds' where id=$1", [roomId]);
+      await assert.rejects(user(HOST, () => watch(code, GUEST)), /Finish your puzzle before/);
+    });
+
+    await user(HOST, () => db.query('select public.numora_submit_solution($1,$2::integer[],$3::jsonb)', [code, puzzle.solution, JSON.stringify(notes)]));
+
+    await t.test('a finished viewer cannot select themselves, a missing player, or someone in another room', async () => {
+      await assert.rejects(user(HOST, () => watch(code, HOST)), /Choose another player/);
+      await assert.rejects(user(HOST, () => watch(code, null)), /Choose another player/);
+      await assert.rejects(user(HOST, () => watch(code, LATE)), /player is not in this room/);
+      await assert.rejects(user(HOST, () => watch(code, OUTSIDER)), /player is not in this room/);
+      await assert.rejects(user(HOST, () => watch(otherCode, OUTSIDER)), /Join this room before spectating/);
+      await assert.rejects(user(HOST, () => watch('ZZZZZZ', GUEST)), /Join this room before spectating/);
+    });
+
+    let targetValues = [...puzzle.givens];
+    let targetNotes = notes.map(cell => [...cell]);
+    let watched: SpectatorState;
+    await t.test('finished viewers can read the target’s saved guesses and notes, including rule-invalid entries', async () => {
+      let invalid: number[] | null = null;
+      for (let index = 0; index < targetValues.length && !invalid; index++) {
+        if (puzzle.givens[index]) continue;
+        for (let value = 1; value <= puzzle.size; value++) {
+          const candidate = [...puzzle.givens]; candidate[index] = value;
+          if (getConflicts(puzzle, candidate).size) { invalid = candidate; break; }
+        }
+      }
+      assert.ok(invalid, 'The test board must expose a visible-rule conflict for the spectator regression.');
+      targetValues = invalid;
+      const noteIndex = targetValues.findIndex(value => !value);
+      targetNotes[noteIndex] = [1, 2];
+      await user(GUEST, () => db.query('select public.numora_save_progress($1,$2::integer[],$3::jsonb)', [code, targetValues, JSON.stringify(targetNotes)]));
+      watched = await user(HOST, () => watch(code.toLowerCase(), GUEST));
+      assert.equal(watched.room_id, roomId);
+      assert.equal(watched.player_id, GUEST);
+      assert.deepEqual(watched.values, targetValues);
+      assert.deepEqual(watched.notes, targetNotes);
+      assert.ok(getConflicts(puzzle, watched.values).size > 0);
+      assert.deepEqual(Object.keys(watched).sort(), ['notes','player_id','room_id','server_now','updated_at','values']);
+      assert.ok(Number.isFinite(Date.parse(watched.updated_at)));
+      assert.ok(Date.parse(watched.server_now) >= Date.parse(watched.updated_at));
+      assert.equal(JSON.stringify(watched).includes(puzzle.generation.seed), false);
+      await assert.rejects(user(GUEST, () => watch(code, HOST)), /Finish your puzzle before/);
+    });
+
+    await t.test('spectating returns the newest committed target progress without writing anything', async () => {
+      const anotherIndex = targetValues.findIndex((value, index) => !value && targetNotes[index].length === 0);
+      targetValues = [...targetValues]; targetValues[anotherIndex] = 2;
+      await user(GUEST, () => db.query('select public.numora_save_progress($1,$2::integer[],$3::jsonb)', [code, targetValues, JSON.stringify(targetNotes)]));
+      const before = (await db.query<{ rows: unknown }>('select jsonb_agg(to_jsonb(p) order by user_id) as rows from numora_private.progress p where room_id=$1', [roomId])).rows[0].rows;
+      const latest = await user(HOST, () => watch(code, GUEST));
+      assert.deepEqual(latest.values, targetValues);
+      assert.deepEqual(latest.notes, targetNotes);
+      assert.ok(Date.parse(latest.updated_at) >= Date.parse(watched.updated_at));
+      const after = (await db.query<{ rows: unknown }>('select jsonb_agg(to_jsonb(p) order by user_id) as rows from numora_private.progress p where room_id=$1', [roomId])).rows[0].rows;
+      assert.deepEqual(after, before);
+    });
+
+    await t.test('finished spectators retain no raw-table write or read grants, and unfinished players still cannot read peers', async () => {
+      for (const viewer of [HOST, GUEST]) {
+        await assert.rejects(user(viewer, () => db.query('select * from numora_private.progress')), /permission denied/);
+        await assert.rejects(user(viewer, () => db.query('select * from numora_private.puzzles')), /permission denied/);
+        await assert.rejects(user(viewer, () => db.query('update numora_private.progress set values=$1 where room_id=$2 and user_id=$3', [puzzle.solution, roomId, GUEST])), /permission denied/);
+      }
+      const ownBefore = (await user(HOST, () => db.query<{ data: State }>('select public.numora_get_room($1) as data', [code]))).rows[0].data;
+      await user(HOST, () => db.query('select public.numora_save_progress($1,$2::integer[],$3::jsonb)', [code, targetValues, JSON.stringify(targetNotes)]));
+      const ownAfter = (await user(HOST, () => db.query<{ data: State }>('select public.numora_get_room($1) as data', [code]))).rows[0].data;
+      assert.deepEqual(ownAfter.self, ownBefore.self);
+      assert.deepEqual(ownAfter.players.find(player => player.user_id === HOST), ownBefore.players.find(player => player.user_id === HOST));
+      assert.deepEqual(ownAfter.self?.values, puzzle.solution);
+      const grants = (await db.query<{ can_read: boolean; can_write: boolean }>("select has_table_privilege('authenticated','numora_private.progress','SELECT') as can_read,has_table_privilege('authenticated','numora_private.progress','UPDATE') as can_write")).rows[0];
+      assert.deepEqual(grants, { can_read: false, can_write: false });
+    });
+
+    await t.test('a finished target can also be watched and migration reapplication preserves read-only behavior', async () => {
+      await user(GUEST, () => db.query('select public.numora_submit_solution($1,$2::integer[],$3::jsonb)', [code, puzzle.solution, JSON.stringify(notes)]));
+      const latest = await user(HOST, () => watch(code, GUEST));
+      assert.deepEqual(latest.values, puzzle.solution);
+      assert.deepEqual(latest.notes, notes);
+      await db.exec(migration);
+      const afterReapply = await user(HOST, () => watch(code, GUEST));
+      assert.deepEqual(afterReapply.values, latest.values);
+      assert.deepEqual(afterReapply.notes, latest.notes);
+      const flags = (await db.query<{ schema_name: string; prosecdef: boolean; proconfig: string[] }>("select n.nspname as schema_name,p.prosecdef,p.proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.proname in ('numora_spectate_player','spectate_player') order by n.nspname")).rows;
+      assert.equal(flags.find(flag => flag.schema_name === 'public')?.prosecdef, false);
+      assert.equal(flags.find(flag => flag.schema_name === 'numora_private')?.prosecdef, true);
+      assert.ok(flags.every(flag => flag.proconfig.includes('search_path=""')));
     });
   } finally { await db.close(); }
 });

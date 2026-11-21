@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomState, RoomDataError } from './model';
+import { normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomState, parseSpectatorState, RoomDataError } from './model';
 
 const host = '11111111-1111-4111-8111-111111111111';
 const guest = '22222222-2222-4222-8222-222222222222';
@@ -12,7 +12,7 @@ function state() {
     room: { id: roomId, code: 'ABC123', host_id: host, status: 'racing', size: 5, difficulty: 'Easy', starts_at: now, created_at: now },
     players: [host, guest].map((user_id, index) => ({ user_id, nickname: index ? 'Guest' : 'Host', ready: true, progress_count: 0, finished_at: null, elapsed_ms: null, joined_at: now })),
     self: { values: [1, ...Array<number>(24).fill(0)], notes: Array.from({ length: 25 }, () => [] as number[]) },
-    puzzle: { id: `match-${roomId}`, title: 'A shared challenge', description: 'Every cell counts.', size: 5, difficulty: 'Easy', givens: [1, ...Array<number>(24).fill(0)], rightWalls: Array<boolean>(25).fill(true), bottomWalls: Array<boolean>(25).fill(true) },
+    puzzle: { id: `match-${roomId}`, title: 'A shared challenge', description: 'Every cell counts.', size: 5, difficulty: 'Easy' as const, givens: [1, ...Array<number>(24).fill(0)], rightWalls: Array<boolean>(25).fill(true), bottomWalls: Array<boolean>(25).fill(true) },
     server_now: '2026-11-19T12:00:01.000Z',
   };
 }
@@ -85,4 +85,61 @@ test('duplicate identities and inconsistent finish records are rejected', () => 
   assert.throws(() => parseRoomState(invalidFinish), RoomDataError);
   const malformedWalls = state(); malformedWalls.puzzle.rightWalls.pop();
   assert.throws(() => parseRoomState(malformedWalls), RoomDataError);
+});
+
+function spectator() {
+  return {
+    room_id: roomId, player_id: guest,
+    values: [...state().self.values], notes: state().self.notes,
+    updated_at: now, server_now: '2026-11-19T12:00:01.000Z',
+  };
+}
+
+test('spectator snapshots preserve private guesses and notes without changing the source', () => {
+  const raw = spectator(); raw.values[1] = 5; raw.notes[2] = [5, 1];
+  const parsed = parseSpectatorState(raw, guest, state().puzzle);
+  // A visible rule violation remains a legitimate saved guess to observe.
+  assert.equal(parsed.values[1], 5);
+  assert.deepEqual(parsed.notes[2], [1, 5]);
+  parsed.values[1] = 2; parsed.notes[2].push(3);
+  assert.equal(raw.values[1], 5);
+  assert.deepEqual(raw.notes[2], [5, 1]);
+});
+
+test('spectator responses must identify the requested player and contain consistent timestamps', () => {
+  const raw = spectator();
+  assert.throws(() => parseSpectatorState(raw, host, state().puzzle), RoomDataError);
+  for (const patch of [
+    { room_id: 'not-a-room' }, { player_id: 'not-a-player' },
+    { updated_at: 'not-a-date' }, { server_now: null },
+    { updated_at: '2026-11-19T12:00:02.000Z' },
+  ]) assert.throws(() => parseSpectatorState({ ...raw, ...patch }, guest, state().puzzle), RoomDataError);
+});
+
+test('spectator progress rejects altered clues, invalid domains, and malformed notes', () => {
+  const invalids = [
+    (raw: ReturnType<typeof spectator>) => { raw.values[0] = 0; },
+    (raw: ReturnType<typeof spectator>) => { raw.values[1] = 6; },
+    (raw: ReturnType<typeof spectator>) => { raw.values.pop(); },
+    (raw: ReturnType<typeof spectator>) => { raw.notes[0] = [1]; },
+    (raw: ReturnType<typeof spectator>) => { raw.notes[1] = [1, 1]; },
+    (raw: ReturnType<typeof spectator>) => { raw.notes[1] = [0]; },
+    (raw: ReturnType<typeof spectator>) => { raw.notes[1] = [6]; },
+    (raw: ReturnType<typeof spectator>) => { raw.notes = new Array<number[]>(25); },
+  ];
+  for (const invalidate of invalids) {
+    const raw = spectator(); invalidate(raw);
+    assert.throws(() => parseSpectatorState(raw, guest, state().puzzle), RoomDataError);
+  }
+  const wrongSize = { ...state().puzzle, size: 6, givens: Array<number>(36).fill(0) };
+  assert.throws(() => parseSpectatorState(spectator(), guest, wrongSize), RoomDataError);
+});
+
+test('spectator payloads fail closed on answer, seed, or unexpected nested data', () => {
+  for (const key of ['solution', 'seed', 'generation']) {
+    assert.throws(() => parseSpectatorState({ ...spectator(), [key]: 'private' }, guest, state().puzzle), RoomDataError);
+    assert.throws(() => parseSpectatorState({ ...spectator(), metadata: { [key]: 'private' } }, guest, state().puzzle), RoomDataError);
+  }
+  const hiddenPuzzle = { ...state().puzzle, solution: Array(25).fill(1) };
+  assert.throws(() => parseSpectatorState(spectator(), guest, hiddenPuzzle), RoomDataError);
 });

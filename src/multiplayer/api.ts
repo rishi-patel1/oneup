@@ -3,10 +3,10 @@ import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import type { Difficulty } from '../game/engine';
 import {
   CompetitionInputError, RoomDataError, isUuid, normalizeNickname, normalizeProgress,
-  normalizeRoomCode, parseRoomState, type RoomState,
+  normalizeRoomCode, parseRoomState, parseSpectatorState, type PublicPuzzle, type RoomState, type SpectatorState,
 } from './model';
 
-export type { PublicPuzzle, RoomPlayer, RoomState } from './model';
+export type { PublicPuzzle, RoomPlayer, RoomState, SpectatorState } from './model';
 export { isSupabaseConfigured };
 
 class CompetitionError extends Error {}
@@ -32,6 +32,9 @@ export function explainError(error: unknown): string {
   if (/failed to fetch|fetch failed|network|load failed|timed? out|timeout|functionsfetcherror/.test(text)) return 'Couldn’t reach the room. Check your connection and try again.';
   if (status === 429 || /rate.limit|too many|room creation limit/.test(text)) return 'Too many attempts. Please wait a moment and try again.';
   if (status === 401 || /jwt|refresh token|session.*(expired|missing)|not authenticated|sign in/.test(text)) return 'Your connection expired. Refresh the page and reconnect.';
+  if (/spectat.*(?:finish|complet)|(?:finish|complet).*spectat|finish your (?:puzzle|race) before watch/.test(text)) return 'Finish your race before watching another player.';
+  if (/spectat.*(?:yourself|own)|(?:yourself|own).*spectat|choose another player.*watch/.test(text)) return 'Choose another player to watch.';
+  if (/spectat.*(?:unavailable|not found)|target.*(?:not.*member|not found|same room)|player is not in this room/.test(text)) return 'That player is not available to watch in this room.';
   if (/room.*(not found|does not exist)|invalid room code|unknown room/.test(text)) return 'That room wasn’t found. Check the code and try again.';
   if (/nickname.*(already|taken|in use)/.test(text)) return 'That nickname is already taken in this room. Choose another.';
   if (/room.*full|capacity|eight players|8 players/.test(text)) return 'This room is full. Try another room.';
@@ -82,16 +85,21 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     return guestRequest;
   }
 
-  async function rpc(name: string, args: Record<string, unknown>): Promise<RoomState> {
+  async function requestRpc(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     const service = requireClient();
     await getUserId();
-    const { data, error } = await service.rpc(name, args);
+    const request = service.rpc(name, args);
+    const { data, error } = await (signal ? request.abortSignal(signal) : request);
     if (error) throw new CompetitionError(explainError(error));
     // Expected join failures return data so Postgres can commit the attempt counter.
     if (data && typeof data === 'object' && typeof data.error === 'string') {
       throw new CompetitionError(explainError({ message: data.error, code: data.code }));
     }
-    return parseRoomState(data);
+    return data;
+  }
+
+  async function rpc(name: string, args: Record<string, unknown>): Promise<RoomState> {
+    return parseRoomState(await requestRpc(name, args));
   }
 
   const getRoom = (code: string) => rpc('numora_get_room', { p_code: normalizeRoomCode(code) });
@@ -120,6 +128,14 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     const board = normalizeProgress(values, notes);
     return rpc('numora_submit_solution', { p_code: normalizeRoomCode(code), p_values: board.values, p_notes: board.notes });
   };
+  async function getSpectatorState(code: string, playerId: string, puzzle: PublicPuzzle, signal?: AbortSignal): Promise<SpectatorState> {
+    const roomCode = normalizeRoomCode(code);
+    const target = playerId.trim().toLowerCase();
+    if (!isUuid(target)) throw new CompetitionInputError('Choose another player in this room to watch.');
+    // The RPC verifies the viewer's finish and both memberships on every request.
+    const data = await requestRpc('numora_spectate_player', { p_code: roomCode, p_player_id: target }, signal);
+    return parseSpectatorState(data, target, puzzle);
+  }
   async function leaveRoom(code: string): Promise<void> {
     const service = requireClient();
     await getUserId();
@@ -160,8 +176,8 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     };
   }
 
-  return { getUserId, createRoom, joinRoom, getRoom, setReady, startRoom, saveProgress, submitSolution, leaveRoom, watchRoom };
+  return { getUserId, createRoom, joinRoom, getRoom, setReady, startRoom, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom };
 }
 
 const api = createCompetitionApi(supabase);
-export const { getUserId, createRoom, joinRoom, getRoom, setReady, startRoom, saveProgress, submitSolution, leaveRoom, watchRoom } = api;
+export const { getUserId, createRoom, joinRoom, getRoom, setReady, startRoom, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom } = api;

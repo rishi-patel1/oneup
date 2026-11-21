@@ -1,0 +1,1072 @@
+.daily-shell {
+  min-height: 100svh;
+}
+.site-header.daily-header {
+  gap: 50px;
+}
+.site-header.daily-header .nav-link:first-child {
+  display: block;
+}
+.site-header.daily-header > .account-control {
+  margin-left: auto;
+}
+.daily-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 30px;
+  padding: 35px 0 30px;
+}
+.daily-intro .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+}
+.daily-intro h1 {
+  font-size: 32px;
+  margin: 10px 0;
+}
+.daily-intro p {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.7;
+}
+.daily-reset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.daily-reset strong {
+  font-family: Manrope, sans-serif;
+  font-variant-numeric: tabular-nums;
+  font-size: 24px;
+  letter-spacing: .4px;
+  color: var(--text);
+  font-weight: 600;
+}
+.daily-reset small {
+  font-size: 10px;
+}
+.daily-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 600px) minmax(300px, 360px);
+  justify-content: center;
+  align-items: start;
+  gap: 28px;
+}
+.daily-play-panel,
+.daily-rankings,
+.daily-friends-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.daily-waiting,
+.daily-start {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 590px;
+  padding: 45px 40px;
+}
+.daily-waiting > svg {
+  color: var(--accent);
+  margin-bottom: 22px;
+}
+.daily-waiting h2,
+.daily-start h2 {
+  font-weight: 600;
+  font-size: 25px;
+  letter-spacing: -.9px;
+  line-height: 1.45;
+}
+.daily-waiting p,
+.daily-start > p {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.8;
+  max-width: 370px;
+  margin-top: 11px;
+}
+.daily-waiting .secondary-button {
+  margin-top: 22px;
+}
+.daily-large-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 82px;
+  height: 82px;
+  background: var(--soft);
+  color: var(--accent);
+  border-radius: 25px;
+  transform: rotate(-7deg);
+  margin-bottom: 30px;
+}
+.daily-large-icon > svg {
+  transform: rotate(7deg);
+}
+.daily-start > .eyebrow {
+  color: var(--muted);
+  font-size: 9px;
+  margin-bottom: 10px;
+}
+.daily-start-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  align-items: flex-start;
+  margin: 25px 0 29px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.daily-start-rules > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.daily-start-rules svg {
+  color: var(--accent);
+}
+.daily-begin,
+.daily-practice {
+  width: 100%;
+  max-width: 350px;
+}
+.daily-practice {
+  margin-top: 10px;
+}
+.daily-start > .daily-mode-pill {
+  margin-bottom: 12px;
+}
+.daily-start > p.daily-start-note {
+  font-size: 11px;
+  margin-top: 15px;
+  max-width: 350px;
+}
+.daily-game {
+  padding: 28px 32px 21px;
+}
+.daily-game-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.daily-game-heading .eyebrow {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+}
+.daily-game-heading h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -.7px;
+  margin-top: 7px;
+}
+.daily-timer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.daily-timer > span {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--text);
+}
+.daily-attempt-mode {
+  margin: 17px 0;
+}
+.daily-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  background: var(--bg);
+  border-radius: 20px;
+  padding: 6px 10px;
+  color: var(--muted);
+}
+.daily-attempt-mode.ranked .daily-mode-pill,
+.daily-mode-pill.ranked {
+  color: var(--accent);
+  background: var(--soft);
+}
+.daily-attempt-mode > p {
+  font-size: 11px;
+  line-height: 1.7;
+  margin-top: 8px;
+  color: var(--muted);
+}
+.daily-attempt-mode > p button {
+  font-size: inherit;
+  padding: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.daily-board .cell:disabled {
+  opacity: 1;
+}
+.daily-board.is-solved .cell.selected:after {
+  display: none;
+}
+.daily-board.is-solved .cell.selected {
+  background: var(--surface) !important;
+}
+.daily-game .board-caption {
+  gap: 8px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.daily-game .board-caption > span:last-child {
+  text-align: right;
+}
+.daily-tools {
+  justify-content: space-around;
+  margin-bottom: 14px;
+}
+.daily-tools > button {
+  min-width: 64px;
+}
+.daily-submit {
+  width: 100%;
+  font-size: 13px;
+}
+.daily-save-status {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+  text-align: center;
+  margin-top: 13px;
+}
+.daily-save-status button {
+  color: var(--accent);
+  font-size: inherit;
+  text-decoration: underline;
+  padding: 0;
+}
+.daily-finish {
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+  color: var(--accent);
+  background: var(--soft);
+  padding: 22px 20px;
+  margin-top: 23px;
+  border-radius: 9px;
+}
+.daily-finish > svg {
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.daily-finish h3 {
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1.5;
+  font-weight: 600;
+  letter-spacing: -.4px;
+}
+.daily-finish p {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.9;
+  margin-top: 5px;
+}
+.daily-finish strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  margin-left: 5px;
+}
+.daily-finish div > span {
+  display: block;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+.daily-finish .text-button {
+  font-size: 11px;
+  margin-top: 14px;
+}
+.daily-error {
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 12px 15px;
+  border-radius: 8px;
+  margin-top: 16px;
+  overflow-wrap: anywhere;
+}
+.daily-page-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 22px;
+}
+.daily-page-error button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 12px;
+  min-height: 35px;
+  padding: 7px 12px;
+  background: var(--surface);
+}
+.daily-rankings {
+  padding: 22px 23px 18px;
+}
+.daily-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+.daily-section-heading .eyebrow {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+}
+.daily-section-heading > button {
+  margin: -5px -7px -5px 0;
+}
+.daily-rankings h2 {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: -.65px;
+  margin-top: 11px;
+  max-width: 240px;
+}
+.daily-ranking-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg);
+  border-radius: 8px;
+  margin: 19px 0 10px;
+}
+.daily-ranking-tabs button {
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 35px;
+  padding: 7px 8px;
+  border-radius: 5px;
+}
+.daily-ranking-tabs button.selected {
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--surface);
+  box-shadow: 0 1px 4px #00000008;
+}
+.daily-rank-row {
+  display: flex;
+  align-items: center;
+  min-height: 62px;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.daily-rank-row:last-child {
+  border-bottom: 0;
+}
+.daily-rank-row.is-you {
+  background: var(--soft);
+  border-radius: 7px;
+  margin: 5px -9px;
+  padding-right: 9px;
+  padding-left: 9px;
+  border-color: transparent;
+}
+.daily-rank-row.is-self-extra {
+  border-top: 1px dashed var(--line);
+  margin-top: 12px;
+}
+.daily-place {
+  width: 23px;
+  flex-shrink: 0;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.daily-place.is-first {
+  color: #a58a47;
+}
+.daily-rank-name {
+  min-width: 0;
+  flex: 1;
+}
+.daily-rank-name strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.6;
+  font-weight: 500;
+}
+.daily-rank-name small {
+  color: var(--muted);
+  margin-left: 6px;
+  font-size: 9px;
+}
+.daily-rank-name > span {
+  font-size: 9px;
+  color: var(--muted);
+}
+.daily-rank-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.2px;
+}
+.daily-rank-list {
+  max-height: 520px;
+  overflow: auto;
+  padding: 0 9px;
+  margin: 0 -9px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.daily-ranking-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  min-height: 190px;
+  padding: 23px 9px;
+  text-align: center;
+  color: var(--muted);
+}
+.daily-ranking-empty > svg {
+  color: var(--accent);
+}
+.daily-ranking-empty p {
+  font-size: 12px;
+  line-height: 1.8;
+  max-width: 240px;
+}
+.daily-ranking-empty button {
+  font-size: 11px;
+  min-height: 37px;
+}
+.daily-ranking-caption {
+  border-top: 1px solid var(--line);
+  padding-top: 13px;
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.daily-ranking-error {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--danger);
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+.daily-ranking-error > button {
+  flex-shrink: 0;
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 4px 0;
+}
+.daily-friends-section {
+  margin-top: 18px;
+}
+.daily-friends-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 19px 22px;
+  gap: 15px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+.daily-friends-toggle > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.daily-friends-toggle > svg {
+  color: var(--muted);
+  transition: transform .2s;
+}
+.daily-friends-toggle > svg.is-open {
+  transform: rotate(180deg);
+}
+.daily-friends-panel {
+  border-top: 1px solid var(--line);
+  padding: 12px 22px 20px;
+}
+.daily-friends-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 -6px 13px 0;
+}
+.daily-friends-loading {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.8;
+  padding: 12px 0;
+}
+.daily-friends-panel label {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.daily-profile-form > div,
+.daily-add-friend > div {
+  display: flex;
+  gap: 8px;
+}
+.daily-friends-panel input {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  border-radius: 7px;
+  padding: 10px 11px;
+  min-height: 40px;
+}
+.daily-friends-panel input::placeholder {
+  color: var(--muted);
+}
+.daily-friends-panel .secondary-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 41px;
+  min-height: 40px;
+  padding: 9px 11px;
+  font-size: 11px;
+}
+.daily-friend-code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 17px 0 21px;
+}
+.daily-friend-code > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.daily-friend-code > div {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.daily-friend-code strong {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px;
+  letter-spacing: .3px;
+  font-weight: 500;
+}
+.daily-friend-code button {
+  width: 27px;
+  height: 30px;
+  color: var(--muted);
+}
+.daily-add-friend > p {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin-top: 8px;
+}
+.daily-friend-list {
+  margin-top: 23px;
+}
+.daily-friend-list h3,
+.daily-sent-requests summary {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  margin-bottom: 7px;
+}
+.daily-friend-list h3 > span,
+.daily-sent-requests summary > span {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.daily-friend-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  min-height: 56px;
+  padding: 10px 0;
+}
+.daily-friend-row:last-child {
+  border: 0;
+}
+.daily-friend-row > span {
+  min-width: 0;
+}
+.daily-friend-row strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.daily-friend-row small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 3px;
+}
+.daily-friend-row > div {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.daily-friend-row > div button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.daily-friend-row > div button:first-child {
+  background: var(--soft);
+  color: var(--accent);
+}
+.daily-friend-remove {
+  padding: 8px 0 8px 6px;
+  font-size: 10px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.daily-friend-remove:hover:not(:disabled) {
+  color: var(--danger);
+}
+.daily-friends-empty {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin-top: 10px;
+}
+.daily-sent-requests {
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+  padding-top: 16px;
+}
+.daily-sent-requests summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.daily-friends-error,
+.daily-friends-notice {
+  font-size: 11px;
+  line-height: 1.8;
+  margin-top: 16px;
+  overflow-wrap: anywhere;
+}
+.daily-friends-error {
+  color: var(--danger);
+}
+.daily-friends-error button {
+  margin-top: 11px;
+}
+.daily-friends-notice {
+  color: var(--accent);
+  background: var(--soft);
+  border-radius: 6px;
+  padding: 10px;
+}
+.daily-friends-signin {
+  border-top: 1px solid var(--line);
+  padding: 20px 22px;
+}
+.daily-friends-signin p {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.daily-friends-signin button {
+  margin-top: 13px;
+  font-size: 11px;
+  min-height: 38px;
+}
+.daily-fair-play {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 22px 12px 0;
+  color: var(--accent);
+}
+.daily-fair-play > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.daily-fair-play p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text);
+}
+.daily-fair-play span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.8;
+  margin-top: 6px;
+}
+.daily-footer {
+  margin-top: 10px;
+}
+@media (max-width: 1100px) {
+  .daily-layout {
+    grid-template-columns: minmax(0, 560px) minmax(275px, 320px);
+    gap: 22px;
+  }
+  .daily-game {
+    padding: 24px 25px 20px;
+  }
+  .daily-rankings {
+    padding: 21px;
+  }
+  .daily-intro h1 {
+    font-size: 29px;
+  }
+}
+@media (max-width: 850px) {
+  .daily-layout {
+    grid-template-columns: minmax(0, 600px);
+  }
+  .daily-sidebar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+    gap: 18px;
+  }
+  .daily-rankings {
+    grid-row: span 2;
+  }
+  .daily-friends-section {
+    margin-top: 0;
+  }
+  .daily-fair-play {
+    padding-top: 0;
+  }
+  .daily-intro {
+    gap: 20px;
+  }
+  .daily-intro h1 {
+    font-size: 27px;
+  }
+  .daily-intro p {
+    font-size: 13px;
+  }
+  .daily-reset strong {
+    font-size: 21px;
+  }
+  .site-header.daily-header {
+    gap: 30px;
+  }
+  .site-header.daily-header nav {
+    gap: 22px;
+  }
+}
+@media (max-width: 720px) {
+  .site-header.daily-header {
+    height: auto;
+    min-height: 112px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0 10px;
+    padding: 14px 0 0;
+  }
+  .site-header.daily-header > .brand {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .site-header.daily-header > .account-control {
+    grid-column: 2;
+    grid-row: 1;
+    margin-left: 0;
+    justify-self: end;
+  }
+  .site-header.daily-header > nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin-left: 0;
+    gap: 28px;
+    justify-content: center;
+    min-height: 49px;
+    align-self: stretch;
+  }
+  .site-header.daily-header .nav-link {
+    font-size: 12px;
+  }
+  .daily-intro {
+    display: block;
+    padding: 27px 0 24px;
+  }
+  .daily-intro .eyebrow {
+    font-size: 8px;
+    letter-spacing: 1.2px;
+    gap: 5px;
+  }
+  .daily-intro .eyebrow > svg {
+    width: 11px;
+  }
+  .daily-intro h1 {
+    font-size: 26px;
+    letter-spacing: -1px;
+    margin: 8px 0;
+  }
+  .daily-intro h1 em {
+    display: block;
+  }
+  .daily-intro p {
+    font-size: 13px;
+    max-width: 330px;
+  }
+  .daily-reset {
+    align-items: center;
+    justify-content: space-between;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-top: 1px solid var(--line);
+    margin-top: 17px;
+    padding-top: 12px;
+    font-size: 11px;
+    gap: 5px 10px;
+  }
+  .daily-reset strong {
+    font-size: 17px;
+    margin-right: auto;
+  }
+  .daily-reset small {
+    font-size: 9px;
+  }
+  .daily-layout {
+    gap: 18px;
+  }
+  .daily-sidebar {
+    display: block;
+  }
+  .daily-friends-section {
+    margin-top: 16px;
+  }
+  .daily-fair-play {
+    padding: 20px 10px 0;
+  }
+  .daily-game {
+    padding: 23px 22px 20px;
+  }
+  .daily-game-heading h2 {
+    font-size: 19px;
+  }
+  .daily-game-heading .eyebrow {
+    font-size: 8px;
+    letter-spacing: 1px;
+  }
+  .daily-timer {
+    gap: 6px;
+  }
+  .daily-timer > svg {
+    width: 15px;
+  }
+  .daily-timer > span {
+    font-size: 16px;
+  }
+  .daily-attempt-mode {
+    margin: 15px 0;
+  }
+  .daily-mode-pill {
+    font-size: 9px;
+  }
+  .daily-attempt-mode > p {
+    font-size: 10px;
+  }
+  .daily-game .board-caption {
+    font-size: 9px;
+  }
+  .daily-game .number-pad {
+    margin-top: 19px;
+  }
+  .daily-tools {
+    margin: 18px -4px 13px;
+  }
+  .daily-tools > button {
+    min-width: 53px;
+  }
+  .daily-tools > button > span {
+    font-size: 10px;
+  }
+  .daily-submit {
+    font-size: 12px;
+    min-height: 42px;
+  }
+  .daily-save-status {
+    font-size: 9px;
+  }
+  .daily-waiting,
+  .daily-start {
+    min-height: 525px;
+    padding: 34px 24px;
+  }
+  .daily-waiting h2,
+  .daily-start h2 {
+    font-size: 22px;
+  }
+  .daily-start > p,
+  .daily-waiting p {
+    font-size: 13px;
+  }
+  .daily-large-icon {
+    width: 70px;
+    height: 70px;
+    border-radius: 21px;
+    margin-bottom: 25px;
+  }
+  .daily-start-rules {
+    font-size: 11px;
+    margin: 22px 0 25px;
+  }
+  .daily-begin,
+  .daily-practice {
+    font-size: 12px;
+    min-height: 44px;
+    line-height: 1.5;
+  }
+  .daily-start > p.daily-start-note {
+    font-size: 10px;
+  }
+  .daily-page-error {
+    font-size: 11px;
+    padding: 11px;
+    gap: 9px;
+  }
+  .daily-page-error button {
+    font-size: 10px;
+    padding: 7px 9px;
+  }
+  .daily-finish {
+    gap: 12px;
+    padding: 18px 15px;
+    margin-top: 20px;
+  }
+  .daily-finish > svg {
+    width: 23px;
+  }
+  .daily-finish h3 {
+    font-size: 15px;
+  }
+  .daily-finish p,
+  .daily-finish .text-button {
+    font-size: 11px;
+  }
+  .daily-finish div > span {
+    font-size: 10px;
+  }
+  .daily-rankings {
+    padding: 23px;
+  }
+  .daily-rankings h2 {
+    max-width: none;
+    font-size: 20px;
+  }
+  .daily-ranking-empty {
+    min-height: 165px;
+  }
+  .daily-rank-row {
+    min-height: 60px;
+  }
+  .daily-rank-name strong,
+  .daily-rank-time {
+    font-size: 12px;
+  }
+  .daily-friends-panel input {
+    font-size: 16px;
+  }
+  .daily-friends-panel label,
+  .daily-friends-panel .secondary-button {
+    font-size: 12px;
+  }
+  .daily-friends-panel #daily-friend-code {
+    font-size: 13px;
+  }
+  .daily-footer {
+    margin-top: 4px;
+  }
+}
+@media (max-width: 380px) {
+  .daily-game {
+    padding: 21px 16px 18px;
+  }
+  .daily-game-heading h2 {
+    font-size: 18px;
+  }
+  .daily-timer > svg {
+    display: none;
+  }
+  .daily-timer > span {
+    font-size: 15px;
+  }
+  .daily-reset small {
+    font-size: 8px;
+  }
+  .daily-start {
+    padding: 31px 21px;
+  }
+  .daily-rankings,
+  .daily-friends-panel {
+    padding-left: 19px;
+    padding-right: 19px;
+  }
+  .daily-friends-toggle {
+    padding-left: 19px;
+    padding-right: 19px;
+  }
+}

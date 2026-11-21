@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Clock3, Copy, Eraser, Flag, LoaderCircle, LogOut, Pencil, Redo2, RotateCcw, Sparkles, Trophy, Undo2, Users } from 'lucide-react';
+import { Check, Clock3, Copy, Eraser, Eye, Flag, LoaderCircle, LogOut, Pencil, Redo2, RotateCcw, Sparkles, Trophy, Undo2, Users } from 'lucide-react';
 import { APP_NAME } from '../branding';
 import BrandMark from './BrandMark';
+import AccountButton from './AccountButton';
 import type { Difficulty, Puzzle } from '../game/engine';
 import { getSegments, isSolved } from '../game/engine';
 import { createSession, restoreSession, serializeSession, sessionReducer, type Session, type SessionAction } from '../game/session';
-import { createRoom, explainError, getRoom, getUserId, isSupabaseConfigured, joinRoom, leaveRoom, saveProgress, setReady, startRoom, submitSolution, watchRoom, type RoomState } from '../multiplayer/api';
+import { createRoom, explainError, getRoom, getSpectatorState, getUserId, isSupabaseConfigured, joinRoom, leaveRoom, saveProgress, setReady, startRoom, submitSolution, watchRoom, type PublicPuzzle, type RoomPlayer, type RoomState, type SpectatorState } from '../multiplayer/api';
 import './competition.css';
 
 const ROOM_KEY = 'numora:competition:room';
@@ -27,7 +28,7 @@ function time(ms: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-export default function CompetitionPage({ onSolo }: { onSolo: () => void }) {
+export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => void; onDaily: () => void }) {
   const [nickname, setNickname] = useState(() => stored(NAME_KEY));
   const [code, setCode] = useState(requestedCode);
   const [entryMode, setEntryMode] = useState<'create' | 'join'>(() => requestedCode() ? 'join' : 'create');
@@ -158,10 +159,10 @@ export default function CompetitionPage({ onSolo }: { onSolo: () => void }) {
   };
 
   return <div className="app-shell arena-shell">
-    <header className="site-header arena-header">
+    <header className="site-header arena-header with-account">
       <a className="brand" href="#" aria-label={`${APP_NAME} solo play`} onClick={event => { event.preventDefault(); onSolo(); }}><span className="brand-mark"><BrandMark /></span><span>{APP_NAME}<span className="brand-period">.</span></span></a>
-      <nav aria-label="Main navigation"><button className="nav-link" onClick={onSolo}>Solo play</button><button className="nav-link active" aria-current="page">Compete</button></nav>
-      <span className="arena-header-note"><Users size={16} /> A little friendly rivalry</span>
+      <nav aria-label="Main navigation"><button className="nav-link" onClick={onSolo}>Solo</button><button className="nav-link" onClick={onDaily}>Daily</button><button className="nav-link active" aria-current="page">Compete</button></nav>
+      <AccountButton />
     </header>
 
     {!snapshot ? <main className="arena-entry">
@@ -210,6 +211,7 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   const [copyMessage, setCopyMessage] = useState('');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'pending' | 'retrying'>('saved');
   const [draftAvailable, setDraftAvailable] = useState(true);
+  const [spectatingId, setSpectatingId] = useState<string | null>(null);
   const mounted = useRef(true);
   const revision = useRef(0);
   const dirty = useRef(false);
@@ -229,6 +231,11 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   const peers = useMemo(() => new Set([...(segments.rows.find(run => run.includes(selected)) ?? []), ...(segments.columns.find(run => run.includes(selected)) ?? [])]), [segments, selected]);
   const finishedPlayers = [...players].filter(player => player.finished_at !== null).sort((a, b) => (a.elapsed_ms ?? Infinity) - (b.elapsed_ms ?? Infinity));
   const rankedPlayers = [...finishedPlayers, ...players.filter(player => player.finished_at === null).sort((a, b) => b.progress_count - a.progress_count)];
+  const spectatingPlayer = own?.finished_at && !leaving ? players.find(player => player.user_id === spectatingId && player.user_id !== userId) : undefined;
+
+  useEffect(() => {
+    if (!own?.finished_at || (spectatingId && !players.some(player => player.user_id === spectatingId && player.user_id !== userId))) setSpectatingId(null);
+  }, [own?.finished_at, spectatingId, players, userId]);
 
   const persistDraft = useCallback((session: Session, isDirty: boolean) => {
     if (isDirty) setDraftAvailable(remember(draftKey, JSON.stringify({ session: serializeSession(session), dirty: true })));
@@ -368,11 +375,11 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
       <section className="arena-play-panel">
         {room.status === 'lobby' ? <div className="arena-lobby"><span className="arena-large-icon"><Users size={32} /></span><div className="eyebrow">A LITTLE ANTICIPATION</div><h2>Good company. Good headspace.</h2><p>Share the room code. Everyone gets the same fresh puzzle after a shared countdown.</p><div className="arena-lobby-rules"><span><Check size={16} /> Notes and undo</span><span><Clock3 size={16} /> One continuous clock</span><span><Flag size={16} /> Fastest valid finish</span></div><button className={`primary-button ${own?.ready ? 'arena-ready' : ''}`} disabled={actionBusy || leaving} onClick={() => { void action(() => setReady(room.code, !own?.ready)); }}>{actionBusy ? <LoaderCircle className="spin" size={16} /> : own?.ready ? <Check size={16} /> : <Flag size={16} />}{own?.ready ? 'Ready. Let’s do this.' : 'I’m ready'}</button>{room.host_id === userId ? <><button className="secondary-button arena-start" disabled={!readyToStart || actionBusy || leaving} onClick={() => { void action(() => startRoom(room.code)); }}>Start the challenge</button><p className="arena-lobby-detail">{players.length < 2 ? 'Invite at least one more player to begin.' : !readyToStart ? 'Waiting for everyone to be ready.' : 'Everyone is ready. Start when you are.'}</p></> : <p className="arena-lobby-detail">{own?.ready ? 'Waiting for the host to start the challenge.' : 'Mark yourself ready when you’re settled in.'}</p>}</div>
           : countdown || !puzzle || !game ? <div className="arena-countdown" aria-live="polite"><span className="eyebrow">SAME GRID. SAME START.</span><strong>{countdown ? Math.max(1, Math.ceil((startTime - serverNow) / 1000)) : <LoaderCircle className="spin" size={43} />}</strong><h2>{countdown ? 'A little focus…' : 'Opening your grid…'}</h2><p>{countdown ? 'Your puzzle appears when the countdown ends.' : 'Your official clock is running. The room is syncing your puzzle.'}</p></div>
-            : <div className="arena-game"><div className="arena-game-top"><div><span className="eyebrow">YOUR SIDE OF THE CHALLENGE</span><h2>{own?.nickname ?? 'Your grid'}</h2></div><div className="arena-timer"><Clock3 size={17} /><span>{time(elapsed)}</span></div></div><div className={`puzzle-board arena-board ${own?.finished_at ? 'is-solved' : ''}`} ref={boardRef} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${puzzle.size} by ${puzzle.size} competition grid`} aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
+            : <div className="arena-game"><div className="arena-game-top"><div><span className="eyebrow">{spectatingPlayer ? 'POST-FINISH SPECTATOR' : 'YOUR SIDE OF THE CHALLENGE'}</span><h2>{spectatingPlayer ? `Spectating ${spectatingPlayer.nickname}` : own?.nickname ?? 'Your grid'}</h2></div><div className="arena-timer"><Clock3 size={17} /><span>{spectatingPlayer && <small className="arena-own-time-label">Your time</small>}{time(elapsed)}</span></div></div>{spectatingPlayer && snapshot.puzzle ? <SpectatorBoard key={spectatingPlayer.user_id} roomCode={room.code} roomId={room.id} player={spectatingPlayer} puzzle={snapshot.puzzle} refreshKey={snapshot.server_now} onBack={() => setSpectatingId(null)} /> : <><div className={`puzzle-board arena-board ${own?.finished_at ? 'is-solved' : ''}`} ref={boardRef} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${puzzle.size} by ${puzzle.size} competition grid`} aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
               const index = row * puzzle.size + column, given = Boolean(puzzle.givens[index]), value = game.values[index];
               const across = segments.rows.find(run => run.includes(index))!, down = segments.columns.find(run => run.includes(index))!;
               return <button key={index} role="gridcell" aria-selected={selected === index} aria-readonly={given} aria-label={`Row ${row + 1}, column ${column + 1}, ${value || 'empty'}${given ? ', fixed clue' : ''}${!value && game.notes[index].length ? `, notes ${game.notes[index].join(', ')}` : ''}. Across length ${across.length}, down length ${down.length}.`} className={`cell ${given ? 'given' : ''} ${selected === index ? 'selected' : ''} ${peers.has(index) ? 'peer' : ''}`} data-race-cell={index} tabIndex={selected === index ? 0 : -1} onClick={() => setSelected(index)} disabled={!canPlay} style={{ borderRightWidth: column === puzzle.size - 1 ? 0 : puzzle.rightWalls[index] ? 3 : 1, borderBottomWidth: row === puzzle.size - 1 ? 0 : puzzle.bottomWalls[index] ? 3 : 1, borderRightColor: puzzle.rightWalls[index] ? 'var(--grid)' : 'var(--cell-line)', borderBottomColor: puzzle.bottomWalls[index] ? 'var(--grid)' : 'var(--cell-line)' }}>{value ? <span className="cell-value">{value}</span> : <span className="cell-notes" aria-hidden="true">{Array.from({ length: Math.max(6, puzzle.size) }, (_, n) => <span key={n}>{game.notes[index].includes(n + 1) ? n + 1 : ''}</span>)}</span>}</button>;
-            })}</div>)}</div><div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>No hints. Your own deductions.</span></div>{own?.finished_at ? <div className="arena-finish"><Trophy size={25} /><div><h3>Beautifully solved.</h3><p>Official time: {time(own.elapsed_ms ?? 0)}.{String(Math.round((own.elapsed_ms ?? 0) % 1000)).padStart(3, '0')}</p><span>{room.status === 'finished' ? 'The results are in.' : 'Your time is locked. Cheer the others on.'}</span></div></div> : <><div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Competition number pad">{Array.from({ length: puzzle.size }, (_, index) => index + 1).map(value => <button key={value} disabled={!canPlay || Boolean(puzzle.givens[selected])} className={effectiveNotes ? 'note-key' : ''} aria-label={`${effectiveNotes ? 'Toggle note' : 'Enter'} ${value}`} onClick={event => enterNumber(value, notesMode || event.shiftKey)}>{value}</button>)}</div><div className="game-tools arena-tools"><button disabled={!canPlay || !game.history.length} onClick={() => edit({ type: 'undo' })}><Undo2 size={19} /><span>Undo</span></button><button disabled={!canPlay || !game.future.length} onClick={() => edit({ type: 'redo' })}><Redo2 size={19} /><span>Redo</span></button><button disabled={!canPlay || Boolean(puzzle.givens[selected])} onClick={() => edit({ type: 'clear-cell', index: selected, puzzle })}><Eraser size={19} /><span>Erase</span></button><button disabled={!canPlay} className={effectiveNotes ? 'tool-active' : ''} aria-pressed={effectiveNotes} onClick={() => setNotesMode(value => !value)} title="Pencil notes (N, or hold Shift)"><Pencil size={19} /><span>Notes <small>{effectiveNotes ? 'ON' : 'OFF'}</small></span></button></div><button className="primary-button arena-submit" disabled={!canPlay || !game.values.every(Boolean)} onClick={() => { void submit(); }}>{submitBusy ? <LoaderCircle className="spin" size={17} /> : <Flag size={17} />}{submitBusy ? 'Checking your finish…' : 'Submit solution'}</button><p className="arena-save-status" role="status">{saveStatus === 'saved' ? 'Your progress is synced with the room.' : saveStatus === 'pending' ? 'Saving your progress…' : draftAvailable ? 'Progress saved on this device. Retrying room sync…' : 'Room sync is disconnected and device storage is unavailable. Keep this tab open.'}</p></>}</div>}
+            })}</div>)}</div><div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>No hints. Your own deductions.</span></div></>}{own?.finished_at ? <div className="arena-finish"><Trophy size={25} /><div><h3>Beautifully solved.</h3><p>Official time: {time(own.elapsed_ms ?? 0)}.{String(Math.round((own.elapsed_ms ?? 0) % 1000)).padStart(3, '0')}</p><span>{room.status === 'finished' ? 'The results are in.' : 'Your time is locked. Cheer the others on.'}</span></div></div> : <><div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Competition number pad">{Array.from({ length: puzzle.size }, (_, index) => index + 1).map(value => <button key={value} disabled={!canPlay || Boolean(puzzle.givens[selected])} className={effectiveNotes ? 'note-key' : ''} aria-label={`${effectiveNotes ? 'Toggle note' : 'Enter'} ${value}`} onClick={event => enterNumber(value, notesMode || event.shiftKey)}>{value}</button>)}</div><div className="game-tools arena-tools"><button disabled={!canPlay || !game.history.length} onClick={() => edit({ type: 'undo' })}><Undo2 size={19} /><span>Undo</span></button><button disabled={!canPlay || !game.future.length} onClick={() => edit({ type: 'redo' })}><Redo2 size={19} /><span>Redo</span></button><button disabled={!canPlay || Boolean(puzzle.givens[selected])} onClick={() => edit({ type: 'clear-cell', index: selected, puzzle })}><Eraser size={19} /><span>Erase</span></button><button disabled={!canPlay} className={effectiveNotes ? 'tool-active' : ''} aria-pressed={effectiveNotes} onClick={() => setNotesMode(value => !value)} title="Pencil notes (N, or hold Shift)"><Pencil size={19} /><span>Notes <small>{effectiveNotes ? 'ON' : 'OFF'}</small></span></button></div><button className="primary-button arena-submit" disabled={!canPlay || !game.values.every(Boolean)} onClick={() => { void submit(); }}>{submitBusy ? <LoaderCircle className="spin" size={17} /> : <Flag size={17} />}{submitBusy ? 'Checking your finish…' : 'Submit solution'}</button><p className="arena-save-status" role="status">{saveStatus === 'saved' ? 'Your progress is synced with the room.' : saveStatus === 'pending' ? 'Saving your progress…' : draftAvailable ? 'Progress saved on this device. Retrying room sync…' : 'Room sync is disconnected and device storage is unavailable. Keep this tab open.'}</p></>}</div>}
         {error && <p className="arena-error" role="alert">{error}</p>}
       </section>
       <aside className="arena-players" aria-label="Players and results"><div className="arena-players-heading"><span className="eyebrow">{room.status === 'lobby' ? 'THE COMPANY' : room.status === 'finished' ? 'THE RESULTS' : 'THE CHALLENGE'}</span><span>{players.length} / 8</span></div><h2>{room.status === 'lobby' ? 'Make yourself at home.' : 'One number at a time.'}</h2><div className="arena-player-list">{rankedPlayers.map(player => {
@@ -380,8 +387,93 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
         const rank = finished ? 1 + finishedPlayers.filter(other => (other.elapsed_ms ?? Infinity) < (player.elapsed_ms ?? Infinity)).length : null;
         const online = presence === null ? null : player.user_id === userId || presence.includes(player.user_id);
         const percent = Math.min(100, Math.round(player.progress_count / Math.max(1, editableCount) * 100));
-        return <div className={`arena-player ${player.user_id === userId ? 'is-you' : ''}`} key={player.user_id}><div className="arena-player-line"><span className={`arena-player-avatar ${rank === 1 ? 'winner' : ''}`}>{rank === 1 ? <Trophy size={18} /> : rank ?? player.nickname.slice(0, 1).toUpperCase()}</span><span className="arena-player-name"><strong>{player.nickname}{player.user_id === userId && <small>you</small>}</strong><span>{room.status === 'lobby' ? player.ready ? 'Ready to go' : 'Getting settled' : finished ? `Finished in ${time(player.elapsed_ms ?? 0)}` : countdown ? 'Starting together' : `${percent}% filled`}{player.user_id === room.host_id && <span className="arena-host-label"> · host</span>}</span></span>{room.status === 'lobby' ? player.ready ? <Check className="arena-ready-check" size={18} /> : online === false ? <span className="arena-away">away</span> : null : finished ? <span className="arena-rank">#{rank}</span> : online === false ? <span className="arena-away">away</span> : null}</div>{room.status !== 'lobby' && !countdown && <div className="progress-track" role="progressbar" aria-label={`${player.nickname} progress`} aria-valuenow={finished ? 100 : percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${finished ? 100 : percent}%` }} /></div>}</div>;
+        return <div className={`arena-player ${player.user_id === userId ? 'is-you' : ''}`} key={player.user_id}><div className="arena-player-line"><span className={`arena-player-avatar ${rank === 1 ? 'winner' : ''}`}>{rank === 1 ? <Trophy size={18} /> : rank ?? player.nickname.slice(0, 1).toUpperCase()}</span><span className="arena-player-name"><strong>{player.nickname}{player.user_id === userId && <small>you</small>}</strong><span>{room.status === 'lobby' ? player.ready ? 'Ready to go' : 'Getting settled' : finished ? `Finished in ${time(player.elapsed_ms ?? 0)}` : countdown ? 'Starting together' : `${percent}% filled`}{player.user_id === room.host_id && <span className="arena-host-label"> · host</span>}</span></span>{room.status === 'lobby' ? player.ready ? <Check className="arena-ready-check" size={18} /> : online === false ? <span className="arena-away">away</span> : null : finished ? <span className="arena-rank">#{rank}</span> : online === false ? <span className="arena-away">away</span> : null}</div>{room.status !== 'lobby' && !countdown && <div className="progress-track" role="progressbar" aria-label={`${player.nickname} progress`} aria-valuenow={finished ? 100 : percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${finished ? 100 : percent}%` }} /></div>}{own?.finished_at && player.user_id !== userId && <button className="arena-spectate-button" aria-pressed={spectatingPlayer?.user_id === player.user_id} disabled={leaving} onClick={() => { setSpectatingId(player.user_id); setError(''); }}><Eye size={15} /><span>Spectate {player.nickname}</span></button>}</div>;
       })}</div><div className="arena-fair-play"><Flag size={17} /><p>Same puzzle. Shared start.<br /><span>Notes and undo are allowed. The clock keeps running until your valid finish reaches the server.</span></p></div><button className="arena-leave" disabled={leaving || actionBusy || submitBusy} onClick={onLeave}><LogOut size={15} />{leaving ? 'Leaving…' : 'Leave room'}</button></aside>
     </div>
   </main>;
+}
+
+interface SpectatorBoardProps {
+  roomCode: string;
+  roomId: string;
+  player: RoomPlayer;
+  puzzle: PublicPuzzle;
+  refreshKey: string;
+  onBack: () => void;
+}
+
+/** Opponent progress is held only in this mounted, post-finish view. */
+function SpectatorBoard({ roomCode, roomId, player, puzzle, refreshKey, onBack }: SpectatorBoardProps) {
+  const [progress, setProgress] = useState<SpectatorState | null>(null);
+  const [error, setError] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const [lastSynced, setLastSynced] = useState<number | null>(null);
+  const requestRefresh = useRef<(force?: boolean) => void>(() => {});
+
+  useLayoutEffect(() => {
+    let stopped = false, inFlight = false, lastRequested = 0, lastAccepted = 0;
+    let controller: AbortController | null = null;
+    const refresh = async (force = false) => {
+      if (stopped || inFlight || (!force && Date.now() - lastRequested < 500)) return;
+      inFlight = true;
+      lastRequested = Date.now();
+      const pending = new AbortController();
+      controller = pending;
+      let timedOut = false;
+      const timeout = setTimeout(() => { timedOut = true; pending.abort(); }, 12_000);
+      setFetching(true);
+      try {
+        const next = await getSpectatorState(roomCode, player.user_id, puzzle, pending.signal);
+        if (stopped) return;
+        if (next.room_id !== roomId || next.player_id !== player.user_id) {
+          throw new Error('This live view no longer matches the selected player.');
+        }
+        const responseTime = Date.parse(next.server_now);
+        if (!Number.isFinite(responseTime) || responseTime < lastAccepted) return;
+        lastAccepted = responseTime;
+        setProgress(next);
+        setLastSynced(Date.now());
+        setError('');
+      } catch (cause) {
+        if (!stopped) setError(timedOut ? 'The live view lost its connection. We’ll keep trying to reconnect.' : explainError(cause));
+      } finally {
+        clearTimeout(timeout);
+        inFlight = false;
+        if (controller === pending) controller = null;
+        if (!stopped) setFetching(false);
+      }
+    };
+    requestRefresh.current = force => { void refresh(force); };
+    void refresh(true);
+    const poll = setInterval(() => { void refresh(); }, 1000);
+    return () => {
+      stopped = true;
+      clearInterval(poll);
+      controller?.abort();
+      requestRefresh.current = () => {};
+    };
+  }, [roomCode, roomId, player.user_id, puzzle.id]);
+
+  // Room broadcasts prompt a refresh too, without overlapping the regular poll.
+  useEffect(() => { requestRefresh.current(); }, [refreshKey]);
+
+  const stale = lastSynced !== null && Date.now() - lastSynced >= 5000;
+  const live = progress !== null && !error && !stale;
+  const reconnecting = progress !== null && !live;
+  const lastSyncText = lastSynced === null ? '' : new Date(lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+  return <section className="arena-spectator" aria-label={`Spectating ${player.nickname}`}>
+    <div className="arena-spectator-toolbar"><div className="arena-spectator-badges"><span className={`arena-live-badge ${live ? 'is-live' : ''}`}><span />{live ? 'Live' : reconnecting ? 'Reconnecting' : fetching ? 'Connecting' : 'Disconnected'}</span><span className="arena-readonly-badge"><Eye size={13} /> Read-only</span></div><button className="secondary-button arena-back-to-grid" onClick={onBack}>Back to my grid</button></div>
+    <p className="arena-spectator-caption">{player.finished_at ? `${player.nickname} finished in ${time(player.elapsed_ms ?? 0)}.` : `${player.nickname} is working through the grid.`} Their entries and pencil notes appear here.</p>
+    {progress ? <><div className={`puzzle-board arena-board arena-spectator-board ${reconnecting ? 'is-reconnecting' : ''}`} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${player.nickname}’s ${puzzle.size} by ${puzzle.size} grid, read-only`} aria-readonly="true" aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>
+      {Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
+        const index = row * puzzle.size + column, value = progress.values[index], given = Boolean(puzzle.givens[index]);
+        const notes = progress.notes[index];
+        return <div key={index} role="gridcell" aria-readonly="true" aria-rowindex={row + 1} aria-colindex={column + 1} aria-label={`Row ${row + 1}, column ${column + 1}, ${value || 'empty'}${given ? ', fixed clue' : ''}${!value && notes.length ? `, notes ${notes.join(', ')}` : ''}, read-only`} data-spectator-cell={index} className={`cell ${given ? 'given' : ''}`} style={{ borderRightWidth: column === puzzle.size - 1 ? 0 : puzzle.rightWalls[index] ? 3 : 1, borderBottomWidth: row === puzzle.size - 1 ? 0 : puzzle.bottomWalls[index] ? 3 : 1, borderRightColor: puzzle.rightWalls[index] ? 'var(--grid)' : 'var(--cell-line)', borderBottomColor: puzzle.bottomWalls[index] ? 'var(--grid)' : 'var(--cell-line)' }}>{value ? <span className="cell-value">{value}</span> : <span className="cell-notes" aria-hidden="true">{Array.from({ length: Math.max(6, puzzle.size) }, (_, n) => <span key={n}>{notes.includes(n + 1) ? n + 1 : ''}</span>)}</span>}</div>;
+      })}</div>)}
+    </div><div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>{live ? 'Updates as they play' : 'Last received grid'}</span></div></>
+      : <div className="arena-spectator-placeholder" role="status">{error ? <><Eye size={30} /><h3>Live view unavailable.</h3><p>We couldn’t load this player’s grid yet.</p></> : <><LoaderCircle className="spin" size={31} /><h3>Opening their grid…</h3><p>Connecting to {player.nickname}’s progress.</p></>}</div>}
+    {(error || stale) && <div className="arena-spectator-error" role="status"><p>{error || 'Waiting for the latest update. This is the last grid we received.'}</p><button className="secondary-button" disabled={fetching} onClick={() => requestRefresh.current(true)}>{fetching ? <LoaderCircle className="spin" size={14} /> : <RotateCcw size={14} />}{fetching ? 'Reconnecting…' : 'Retry live view'}</button></div>}
+    {lastSyncText && <p className="arena-spectator-sync">Last synced {lastSyncText}. {live ? 'This view is live.' : 'New updates will appear when the connection returns.'}</p>}
+  </section>;
 }

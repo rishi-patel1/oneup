@@ -1,0 +1,15 @@
+.account-control{position:relative;flex-shrink:0;z-index:30}
+.account-trigger{display:flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--text);font-size:12px;white-space:nowrap}
+.account-trigger:hover:not(:disabled){border-color:var(--accent);background:var(--soft)}
+.account-trigger:disabled{opacity:.6}
+.account-google-g{font-size:16px;font-weight:700;color:var(--accent)}
+.account-popover{position:absolute;right:0;top:calc(100% + 12px);width:min(320px,calc(100vw - 32px));padding:25px 20px 20px;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:0 16px 45px #182c1d18}
+.account-popover>strong{display:block;font-size:15px;padding-right:18px}
+.account-popover p{font-size:12px;line-height:1.75;color:var(--muted);margin:10px 0;overflow-wrap:anywhere}
+.account-popover .account-email{color:var(--text)}
+.account-popover .account-error{padding:11px;border-radius:7px;color:var(--text);background:var(--soft)}
+.account-popover .secondary-button{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px;margin-top:14px;padding:11px}
+.account-close{position:absolute;right:9px;top:9px;width:25px;height:25px}
+.site-header.with-account>.account-control{margin-left:auto}
+@media(max-width:720px){.site-header.with-account{display:grid;grid-template-columns:1fr auto;gap:0 12px;height:auto;min-height:112px;padding:14px 0 0}.site-header.with-account>.brand{grid-column:1;grid-row:1}.site-header.with-account>.account-control,.site-header.with-account>.header-actions{grid-column:2;grid-row:1;margin-left:0;justify-self:end}.site-header.with-account>.header-actions{gap:8px}.site-header.with-account>nav{grid-column:1/-1;grid-row:2;margin-left:0;gap:28px;justify-content:center;min-height:49px;align-self:stretch}.site-header.with-account .nav-link:first-child{display:block}.site-header.with-account .nav-link{font-size:12px}}
+@media(max-width:720px){.account-trigger{padding:7px 9px;font-size:11px;min-height:35px;gap:5px}.account-google-label{display:none}.account-popover{right:-2px}}

@@ -5,7 +5,13 @@ import { createCompetitionApi, explainError } from './api';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const roomId = '33333333-3333-4333-8333-333333333333';
+const targetId = 'abcdef12-abcd-4abc-8abc-abcdef123456';
 const now = '2026-11-19T12:00:00.000Z';
+const spectatorPuzzle = {
+  id: `match-${roomId}`, title: 'A shared challenge', description: 'Every cell counts.', size: 5,
+  difficulty: 'Easy' as const, givens: [1, ...Array<number>(24).fill(0)],
+  rightWalls: Array<boolean>(25).fill(true), bottomWalls: Array<boolean>(25).fill(true),
+};
 
 function mockClient() {
   let signedIn = false;
@@ -16,6 +22,7 @@ function mockClient() {
   let channels = 0;
   const rpcCalls: { name: string; args: Record<string, unknown> }[] = [];
   const functionCalls: unknown[] = [];
+  const signals: AbortSignal[] = [];
   const handlers: { type: string; callback: () => void }[] = [];
   const lobby = {
     room: { id: roomId, code: 'ABC123', host_id: userId, status: 'lobby', size: 5, difficulty: 'Easy', starts_at: null, created_at: now },
@@ -23,6 +30,7 @@ function mockClient() {
     puzzle: null, self: null, server_now: now,
   };
   let rpcData: unknown = lobby;
+  let rpcError: unknown = null;
   const channel = {
     on(type: string, _filter: unknown, callback: () => void) { handlers.push({ type, callback }); return channel; },
     subscribe(callback: (status: string) => void) { callback('SUBSCRIBED'); return channel; },
@@ -40,15 +48,20 @@ function mockClient() {
         return { data: { user: { id: userId } }, error: null };
       },
     },
-    rpc: async (name: string, args: Record<string, unknown>) => { rpcCalls.push({ name, args }); return { data: rpcData, error: null }; },
+    rpc: (name: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ name, args });
+      const response = Promise.resolve({ data: rpcData, error: rpcError });
+      return Object.assign(response, { abortSignal: (signal: AbortSignal) => { signals.push(signal); return response; } });
+    },
     functions: { invoke: async (...args: unknown[]) => { functionCalls.push(args); return { data: { code: 'ABC123' }, error: null }; } },
     channel: () => { channels++; return channel; },
     removeChannel: async () => { removed++; return 'ok'; },
   };
   return {
-    service: service as unknown as SupabaseClient, handlers, rpcCalls, functionCalls,
+    service: service as unknown as SupabaseClient, handlers, rpcCalls, functionCalls, signals,
     block: (value: boolean) => { blocked = value; },
     respondWith: (value: unknown) => { rpcData = value; },
+    failWith: (value: unknown) => { rpcError = value; },
     counts: () => ({ signups, sessionReads, removed, channels }),
   };
 }
@@ -126,4 +139,41 @@ test('expected join failures are decoded from successful transactions that prese
   await assert.rejects(api.joinRoom('ABC123', 'Player'), /room wasn’t found/);
   mock.respondWith({ error: 'That nickname is already in use in this room.', code: 'P0001' });
   await assert.rejects(api.joinRoom('ABC123', 'Player'), /nickname is already taken/);
+});
+
+test('spectator requests normalize routing, reuse the session, and send no private viewer claims', async () => {
+  const mock = mockClient(); const api = createCompetitionApi(mock.service);
+  mock.respondWith({
+    room_id: roomId, player_id: targetId, values: [...spectatorPuzzle.givens],
+    notes: Array.from({ length: 25 }, () => []), updated_at: now, server_now: now,
+  });
+  const controller = new AbortController();
+  const snapshot = await api.getSpectatorState(' abc123 ', ` ${targetId.toUpperCase()} `, spectatorPuzzle, controller.signal);
+  assert.equal(snapshot.player_id, targetId);
+  assert.deepEqual(mock.rpcCalls[0], { name: 'numora_spectate_player', args: { p_code: 'ABC123', p_player_id: targetId } });
+  assert.equal(mock.signals[0], controller.signal);
+  await api.getSpectatorState('ABC123', targetId, spectatorPuzzle);
+  assert.equal(mock.counts().sessionReads, 2);
+  assert.equal(mock.counts().signups, 1);
+});
+
+test('malformed spectator routing is rejected before any authentication or room request', async () => {
+  const mock = mockClient(); const api = createCompetitionApi(mock.service);
+  await assert.rejects(api.getSpectatorState('ABC', targetId, spectatorPuzzle), /six-character/);
+  await assert.rejects(api.getSpectatorState('ABC123', 'not-a-player', spectatorPuzzle), /another player/);
+  assert.equal(mock.counts().sessionReads, 0);
+  assert.equal(mock.counts().signups, 0);
+  assert.equal(mock.rpcCalls.length, 0);
+});
+
+test('spectator authorization failures provide useful feedback and remain server-enforced', async () => {
+  const mock = mockClient(); const api = createCompetitionApi(mock.service);
+  mock.failWith({ code: '42501', message: 'Finish your puzzle before watching another player.' });
+  await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /Finish your race before watching/);
+  mock.failWith({ code: '42501', message: 'Join this room before spectating.' });
+  await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /don’t have access/);
+  mock.failWith({ code: '42501', message: 'That player is not in this room.' });
+  await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /not available to watch/);
+  mock.failWith({ code: '22023', message: 'Choose another player in this room to watch.' });
+  await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /Choose another player to watch/);
 });

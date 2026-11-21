@@ -30,6 +30,16 @@ export interface RoomState {
   server_now: string;
 }
 
+/** Private target progress returned only by the server-authorized spectator RPC. */
+export interface SpectatorState {
+  room_id: string;
+  player_id: string;
+  values: number[];
+  notes: number[][];
+  updated_at: string;
+  server_now: string;
+}
+
 export class CompetitionInputError extends Error {}
 export class RoomDataError extends Error {
   constructor() { super('The room returned unexpected data. Try reconnecting.'); }
@@ -86,6 +96,26 @@ export function normalizeProgress(values: number[], notes: number[][]): { values
     throw new CompetitionInputError('The saved grid is invalid. Reconnect to restore your progress.');
   }
   return { values: [...values], notes: notes.map(cell => [...cell].sort((a, b) => a - b)) };
+}
+
+/** This DTO stays separate from room polling so unfinished players never receive opponents' entries. */
+export function parseSpectatorState(raw: unknown, playerId: string, puzzle: PublicPuzzle): SpectatorState {
+  ensure(record(raw) && isUuid(playerId));
+  const fields = ['room_id', 'player_id', 'values', 'notes', 'updated_at', 'server_now'];
+  ensure(Object.keys(raw).every(key => fields.includes(key)) && !secretKeys.some(key => key in raw));
+  ensure(isUuid(raw.room_id) && isUuid(raw.player_id) && raw.player_id.toLowerCase() === playerId.toLowerCase());
+  ensure(date(raw.updated_at) && date(raw.server_now) && Date.parse(raw.updated_at) <= Date.parse(raw.server_now));
+  ensure(record(puzzle) && !secretKeys.some(key => key in puzzle) && sizes.includes(puzzle.size));
+  const count = puzzle.size * puzzle.size;
+  ensure(Array.isArray(puzzle.givens) && puzzle.givens.length === count && Array.from(puzzle.givens).every(value => whole(value, 0, puzzle.size)));
+  ensure(Array.isArray(raw.values) && Array.isArray(raw.notes));
+  let progress: ReturnType<typeof normalizeProgress>;
+  try { progress = normalizeProgress(raw.values, raw.notes); } catch { throw new RoomDataError(); }
+  ensure(progress.values.length === count && puzzle.givens.every((given, index) => given === 0 || progress.values[index] === given));
+  return {
+    room_id: raw.room_id.toLowerCase(), player_id: raw.player_id.toLowerCase(),
+    ...progress, updated_at: raw.updated_at, server_now: raw.server_now,
+  };
 }
 
 /** Fail closed if a server response accidentally contains the hidden answer or seed. */

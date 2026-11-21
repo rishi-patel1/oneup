@@ -6,6 +6,6 @@ const key = import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY;
 export const isSupabaseConfigured = Boolean(url && key);
 
 export const supabase = url && key ? createClient(url, key, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'numora-competition-auth' },
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce', storageKey: 'numora-competition-auth' },
   realtime: { params: { eventsPerSecond: 5 } },
 }) : null;

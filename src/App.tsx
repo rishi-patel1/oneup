@@ -15,6 +15,9 @@ import NewPuzzleForm from './components/NewPuzzleForm';
 import BrandMark from './components/BrandMark';
 import { APP_NAME, STORAGE_PREFIX } from './branding';
 import CompetitionPage from './components/CompetitionPage';
+import DailyPage from './components/DailyPage';
+import AccountButton from './components/AccountButton';
+import { useAccount } from './account/AccountProvider';
 
 const STORAGE = STORAGE_PREFIX;
 type Preferences = { theme: 'light' | 'dark'; autoCheck: boolean; notesMode: boolean };
@@ -60,7 +63,11 @@ function firstOpen(puzzle: Puzzle, values: number[]) {
 }
 
 export default function App() {
-  const [view, setView] = useState<'solo' | 'compete'>(() => new URLSearchParams(window.location.search).has('room') ? 'compete' : 'solo');
+  const account = useAccount();
+  const [view, setView] = useState<'solo' | 'compete' | 'daily'>(() => {
+    const query = new URLSearchParams(window.location.search);
+    return query.get('view') === 'daily' ? 'daily' : query.has('room') || query.get('view') === 'compete' ? 'compete' : 'solo';
+  });
   const [puzzle, setPuzzle] = useState(initialPuzzle);
   const [session, setSession] = useState<Session>(() => loadSession(initialPuzzle()));
   const [selected, setSelected] = useState(() => firstOpen(puzzle, session.values));
@@ -326,27 +333,34 @@ export default function App() {
     notify('A fresh start. You’ve got this.');
   };
 
-  if (view === 'compete') return <CompetitionPage onSolo={() => {
+  const navigate = (next: 'solo' | 'compete' | 'daily') => {
     const url = new URL(window.location.href);
     url.searchParams.delete('room');
+    if (next === 'solo') url.searchParams.delete('view');
+    else url.searchParams.set('view', next);
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
-    setView('solo');
-  }} />;
+    if (next !== 'solo') dispatch({ type: 'pause' });
+    setView(next);
+  };
+  const accountKey = account.user && !account.user.is_anonymous ? account.user.id : 'guest';
+  if (view === 'daily') return <DailyPage key={accountKey} onSolo={() => navigate('solo')} onCompete={() => navigate('compete')} />;
+  if (view === 'compete') return <CompetitionPage key={accountKey} onSolo={() => navigate('solo')} onDaily={() => navigate('daily')} />;
 
   return (
     <div className="app-shell">
-      <header className="site-header" inert={collectionOpen}>
+      <header className="site-header with-account" inert={collectionOpen}>
         <a className="brand" href="#" aria-label={`${APP_NAME} home`} onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
           <span className="brand-mark"><BrandMark /></span>
           <span>{APP_NAME}<span className="brand-period">.</span></span>
         </a>
         <nav aria-label="Main navigation">
           <button className="nav-link active" onClick={() => boardRef.current?.querySelector<HTMLButtonElement>(`[data-cell="${selected}"]`)?.focus()}>Solo</button>
-          <button className="nav-link" onClick={() => { dispatch({ type: 'pause' }); setView('compete'); }}>Compete</button>
+          <button className="nav-link" onClick={() => navigate('daily')}>Daily</button>
+          <button className="nav-link" onClick={() => navigate('compete')}>Compete</button>
           <button className="nav-link howto-nav" aria-label="How to play" onClick={() => setModal('help')}><CircleHelp className="nav-help-icon" size={20} /><span>How to play</span></button>
         </nav>
         <div className="header-actions">
-          <span className="local-tag"><span /> Your little logic break</span>
+          <AccountButton />
           <button className="icon-button theme-button" aria-label={`Switch to ${preferences.theme === 'light' ? 'dark' : 'light'} mode`} onClick={() => setPreference('theme', preferences.theme === 'light' ? 'dark' : 'light')}>
             {preferences.theme === 'light' ? <Moon size={19} /> : <Sun size={19} />}
           </button>

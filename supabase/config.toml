@@ -4,6 +4,10 @@ project_id = "numora"
 verify_jwt = true
 entrypoint = "./functions/numora-create-room/index.ts"
 
+[functions.numora-daily]
+verify_jwt = true
+entrypoint = "./functions/numora-daily/index.ts"
+
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:5173"
