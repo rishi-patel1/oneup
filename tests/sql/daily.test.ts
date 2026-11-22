@@ -33,8 +33,9 @@ const puzzle = generatePuzzle({ size: 6, difficulty: 'Medium', seed: 'daily-sql-
 const alternate = generatePuzzle({ size: 6, difficulty: 'Medium', seed: 'daily-sql-other-private-seed' });
 const notes = Array.from({ length: 36 }, () => [] as number[]);
 const migrationDirectory = new URL('../../supabase/migrations/', import.meta.url);
-const migrations = readdirSync(migrationDirectory).filter(name => name.endsWith('.sql')).sort()
-  .map(name => readFileSync(new URL(name, migrationDirectory), 'utf8')).join('\n');
+const migrationFiles = readdirSync(migrationDirectory).filter(name => name.endsWith('.sql')).sort();
+const readMigration = (name: string) => readFileSync(new URL(name, migrationDirectory), 'utf8');
+const migrations = migrationFiles.map(readMigration).join('\n');
 
 // These are platform fixtures, not application authorization shortcuts. All RPC
 // calls below run as real client roles with auth.uid() set from the request claim.
@@ -117,7 +118,9 @@ test('daily SQL: shared UTC puzzles, Google ranking, private profiles, and accep
       assert.equal(new Date(s.resets_at).toISOString(), `${next}T00:00:00.000Z`);
       assert.equal(new Date(s.server_now).toISOString().slice(0, 10), today);
       assert.match(profileA.friend_code, /^[A-F0-9]{10}$/);
-      assert.match(profileA.display_name, /^Player [A-F0-9]{6}$/);
+      assert.match(profileA.display_name, /^[A-Z][a-z]+[A-Z][a-z]+$/);
+      assert.ok(profileA.display_name.length <= 24);
+      assert.equal((await user(A, daily)).profile!.display_name, profileA.display_name);
       assert.deepEqual(Object.keys(profileA).sort(), ['display_name', 'friend_code', 'id']);
       assert.equal(JSON.stringify(s).includes('private.example'), false);
       assert.equal(JSON.stringify(s).includes('Private legal name'), false);
@@ -394,5 +397,66 @@ test('daily SQL: shared UTC puzzles, Google ranking, private profiles, and accep
       assert.equal(rls.rows.length, 4); assert.ok(rls.rows.every(row => row.relrowsecurity));
       assert.equal((await user(A, () => board())).total, 58);
     });
+  } finally { await db.close(); }
+});
+
+test('playful defaults backfill only untouched names and preserve profile permissions', async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(platform);
+    const nameMigration = migrationFiles.find(name => name.endsWith('_numora_playful_profile_names.sql'))!;
+    await db.exec(migrationFiles.filter(name => name !== nameMigration).map(readMigration).join('\n'));
+    for (const id of [A, B, C, D, LATE]) {
+      await db.query('insert into auth.users(id) values($1)', [id]);
+      await db.query("insert into auth.identities(user_id,provider) values($1,'google')", [id]);
+    }
+    for (const [id, name, code, edited] of [
+      [A, 'Player ABCDEF', '1111ABCDEF', false],
+      [B, 'My chosen name', '2222ABCDEF', false],
+      [C, 'Player ABCDEF', '3333ABCDEF', true],
+      [D, 'Player FADE00', '4444ABCDEF', false],
+    ] as const) {
+      await db.query(`insert into numora_private.profiles(user_id,display_name,friend_code,created_at,updated_at)
+        values($1,$2,$3,'2026-01-01T00:00:00Z',$4::timestamptz)`,
+      [id, name, code, edited ? '2026-01-01T00:01:00Z' : '2026-01-01T00:00:00Z']);
+    }
+    await db.exec(readMigration(nameMigration));
+    const names = async () => (await db.query<{ user_id: string; display_name: string; friend_code: string }>(
+      'select user_id,display_name,friend_code from numora_private.profiles order by user_id')).rows;
+    const after = await names();
+    assert.match(after[0].display_name, /^[A-Z][a-z]+[A-Z][a-z]+$/);
+    assert.ok(after[0].display_name.length <= 24);
+    assert.equal(after[0].friend_code, '1111ABCDEF');
+    assert.equal(after[1].display_name, 'My chosen name');
+    assert.equal(after[2].display_name, 'Player ABCDEF', 'later manual reset to original text is preserved');
+    assert.equal(after[3].display_name, 'Player FADE00', 'similar text with a different code is preserved');
+    await db.exec(readMigration(nameMigration));
+    assert.deepEqual(await names(), after);
+
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [LATE]);
+    await db.exec('set role authenticated');
+    const getProfile = async () => (await db.query<{ data: DailyState }>('select public.numora_get_daily() as data')).rows[0].data.profile!;
+    const generated = await getProfile();
+    assert.match(generated.display_name, /^[A-Z][a-z]+[A-Z][a-z]+$/);
+    assert.ok(generated.display_name.length <= 24);
+    assert.deepEqual(await getProfile(), generated);
+    assert.deepEqual(Object.keys(generated).sort(), ['display_name', 'friend_code', 'id']);
+    await assert.rejects(db.query('select numora_private.playful_profile_name()'), /permission denied/);
+    await assert.rejects(db.query('select * from numora_private.profiles'), /permission denied/);
+    const edited = (await db.query<{ data: Profile }>("select public.numora_update_profile('HungryGoose') as data")).rows[0].data;
+    assert.equal(edited.display_name, 'HungryGoose');
+    assert.equal(edited.friend_code, generated.friend_code);
+    await db.exec('reset role');
+    await db.exec(readMigration(nameMigration));
+    await db.exec('set role authenticated');
+    assert.equal((await getProfile()).display_name, 'HungryGoose');
+    await db.exec('reset role');
+    for (const role of ['anon', 'service_role']) {
+      await db.exec(`set role ${role}`);
+      await assert.rejects(db.query('select numora_private.playful_profile_name()'), /permission denied/);
+      await db.exec('reset role');
+    }
+    const samples = (await db.query<{ name: string }>('select numora_private.playful_profile_name() as name from generate_series(1,256)')).rows;
+    assert.ok(samples.every(({ name }) => /^[A-Z][a-z]+[A-Z][a-z]+$/.test(name) && name.length <= 24));
   } finally { await db.close(); }
 });
