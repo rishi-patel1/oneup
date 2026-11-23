@@ -2,9 +2,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '../utils/supabase';
 import { getUserId } from '../multiplayer/api';
 import { isUuid, normalizeProgress } from '../multiplayer/model';
-import { DailyDataError, DailyInputError, normalizeDailyDate, normalizeDisplayName, normalizeFriendCode, parseDailyLeaderboard, parseDailyState, parseFriendsState, parseProfile, type DailyLeaderboard, type DailyState, type FriendsState, type LeaderboardScope, type Profile } from './model';
+import { DailyDataError, DailyInputError, normalizeDailyDate, normalizeDisplayName, normalizeFriendCode, parseDailyLeaderboard, parseDailyState, parseDailyStreaks, parseFriendsState, parseProfile, type DailyLeaderboard, type DailyState, type DailyStreaks, type FriendsState, type LeaderboardScope, type Profile } from './model';
 
-export type { DailyState, DailyAttempt, DailyLeaderboard, FriendsState, Friend, FriendRequest, Profile, LeaderboardEntry, LeaderboardScope } from './model';
+export type { DailyState, DailyAttempt, DailyLeaderboard, DailyStreaks, FriendsState, Friend, FriendRequest, Profile, LeaderboardEntry, LeaderboardScope } from './model';
 export { isSupabaseConfigured } from '../utils/supabase';
 class DailyApiError extends Error {}
 
@@ -65,6 +65,10 @@ export function createDailyApi(client: SupabaseClient | null, identify: () => Pr
     return parseDailyState(await unwrap(data, error));
   }
   async function startDaily(): Promise<DailyState> { return parseDailyState(await rpc('numora_start_daily', {})); }
+  async function getDailyStreaks(date: string, signal?: AbortSignal): Promise<DailyStreaks> {
+    const expectedDate = normalizeDailyDate(date);
+    return parseDailyStreaks(await rpc('numora_daily_streaks', {}, signal), expectedDate);
+  }
   function boardArgs(date: string, values: number[], notes: number[][]) {
     const day = normalizeDailyDate(date), progress = normalizeProgress(values, notes);
     if (progress.values.length !== 36) throw new DailyInputError('The daily grid must contain 36 cells. Refresh to restore it.');
@@ -91,7 +95,7 @@ export function createDailyApi(client: SupabaseClient | null, identify: () => Pr
   async function removeFriend(id: string): Promise<FriendsState> { return parseFriendsState(await rpc('numora_remove_friend', { p_user_id: uuid(id) })); }
   async function cancelFriendRequest(id: string): Promise<FriendsState> { return parseFriendsState(await rpc('numora_cancel_friend_request', { p_request_id: uuid(id) })); }
   async function updateProfile(name: string): Promise<Profile> { return parseProfile(await rpc('numora_update_profile', { p_display_name: normalizeDisplayName(name) })); }
-  return { getDailyState, startDaily, saveDaily, submitDaily, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile };
+  return { getDailyState, getDailyStreaks, startDaily, saveDaily, submitDaily, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile };
 }
 
-export const { getDailyState, startDaily, saveDaily, submitDaily, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile } = createDailyApi(supabase);
+export const { getDailyState, getDailyStreaks, startDaily, saveDaily, submitDaily, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile } = createDailyApi(supabase);

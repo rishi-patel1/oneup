@@ -129,6 +129,8 @@ Sign in with Google **before starting** to enter the ranked daily challenge. Sta
 
 Guests can play the same board as **practice**. A practice attempt stays unranked if the guest later links Google, preventing a previewed board from becoming a fresh ranked attempt. Return the next day for a ranked challenge. A daily attempt expires at the next UTC reset; old entries cannot be submitted against the new day's board. Signed-in daily progress follows the same account across devices. Unsent edits also use a local draft while the connection is interrupted.
 
+**Your daily streaks** shows your current and longest run of consecutive ranked daily finishes. Existing results count automatically. Finishing today extends the current streak; if you finished yesterday, it stays active while today's puzzle is still available. Missing a full UTC day resets the current streak, while your longest streak remains. Practice attempts and incomplete puzzles do not count. Streaks are calculated on the server for the signed-in account and update after a verified finish.
+
 ## Google sign-in setup
 
 Google credentials belong in Supabase, never in `VITE_` environment variables. The app uses Supabase OAuth with PKCE and the existing two public browser variables.

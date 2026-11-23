@@ -58,6 +58,21 @@ test('leaderboard requests enforce response day/scope and forward cancellation',
   await assert.rejects(service.api.getDailyLeaderboard(date, 'friends'), /unexpected data/);
 });
 
+test('streaks request only the current account and bind the response to the UTC day', async () => {
+  const service = mock(), controller = new AbortController();
+  const streaks = { date, current: 2, max: 5, completed_today: true, last_completed_date: date };
+  service.respond(streaks);
+  assert.deepEqual(await service.api.getDailyStreaks(date, controller.signal), streaks);
+  assert.deepEqual(service.calls[0], { name: 'numora_daily_streaks', args: {} });
+  assert.equal(service.signals[0], controller.signal);
+  assert.equal(service.identityCalls(), 1);
+  service.respond({ ...streaks, date: '2026-11-20' });
+  await assert.rejects(service.api.getDailyStreaks(date), /unexpected data/);
+  const untouched = mock();
+  await assert.rejects(untouched.api.getDailyStreaks('2026-02-30'));
+  assert.equal(untouched.identityCalls(), 0);
+});
+
 test('friend mutations use canonical codes, request IDs, and user IDs without authorizing from the client', async () => {
   const service = mock(); service.respond(friends);
   await service.api.getFriends(); await service.api.requestFriend(' abc1234567 ');

@@ -11,6 +11,10 @@ export interface DailyState {
   daily: { id: string; date: string; size: 6; difficulty: 'Medium' } | null;
   puzzle: PublicPuzzle | null; attempt: DailyAttempt | null; profile: Profile | null;
 }
+export interface DailyStreaks {
+  date: string; current: number; max: number;
+  completed_today: boolean; last_completed_date: string | null;
+}
 export type LeaderboardScope = 'global' | 'friends';
 export interface LeaderboardEntry {
   rank: number; user_id: string; display_name: string; friend_code: string; elapsed_ms: number;
@@ -115,6 +119,20 @@ export function parseDailyState(raw: unknown): DailyState {
   } else ensure(raw.puzzle === null);
   ensure(daily !== null || (puzzle === null && attempt === null));
   return { date, resets_at: raw.resets_at, server_now: raw.server_now, daily, puzzle, attempt, profile };
+}
+
+export function parseDailyStreaks(raw: unknown, expectedDate: string): DailyStreaks {
+  object(raw, ['date', 'current', 'max', 'completed_today', 'last_completed_date']);
+  const date = day(raw.date);
+  ensure(date === expectedDate && integer(raw.current) && integer(raw.max) && raw.current <= raw.max && typeof raw.completed_today === 'boolean');
+  const last = raw.last_completed_date === null ? null : day(raw.last_completed_date);
+  if (last === null) ensure(raw.current === 0 && raw.max === 0 && !raw.completed_today);
+  else {
+    const gap = (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${last}T00:00:00Z`)) / 86_400_000;
+    ensure(gap >= 0 && raw.max > 0 && raw.completed_today === (gap === 0));
+    ensure(gap <= 1 ? raw.current > 0 : raw.current === 0);
+  }
+  return { date, current: raw.current, max: raw.max, completed_today: raw.completed_today, last_completed_date: last };
 }
 
 export function parseDailyLeaderboard(raw: unknown, expectedDate: string, expectedScope: LeaderboardScope): DailyLeaderboard {

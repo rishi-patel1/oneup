@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DailyDataError, normalizeDailyDate, normalizeDisplayName, normalizeFriendCode, parseDailyLeaderboard, parseDailyState, parseFriendsState, parseProfile } from './model';
+import { DailyDataError, normalizeDailyDate, normalizeDisplayName, normalizeFriendCode, parseDailyLeaderboard, parseDailyState, parseDailyStreaks, parseFriendsState, parseProfile } from './model';
 
 const user = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
 const dailyId = '33333333-3333-4333-8333-333333333333', attemptId = '44444444-4444-4444-8444-444444444444';
@@ -17,6 +17,24 @@ function daily(started = true) {
 }
 function friends() { return { profile, friends: [{ user_id: other, display_name: 'Player Two', friend_code: 'BCD1234567' }], incoming: [], outgoing: [] }; }
 const row = { rank: 1, user_id: user, display_name: profile.display_name, friend_code: profile.friend_code, elapsed_ms: 1234 };
+
+test('daily streaks distinguish today, yesterday, gaps, and no history', () => {
+  const empty = { date, current: 0, max: 0, completed_today: false, last_completed_date: null };
+  assert.deepEqual(parseDailyStreaks(empty, date), empty);
+  const active = { date, current: 3, max: 7, completed_today: false, last_completed_date: '2026-11-20' };
+  assert.deepEqual(parseDailyStreaks(active, date), active);
+  assert.equal(parseDailyStreaks({ ...active, current: 4, completed_today: true, last_completed_date: date }, date).current, 4);
+  assert.equal(parseDailyStreaks({ ...active, current: 0, last_completed_date: '2026-11-19' }, date).max, 7);
+});
+
+test('streak snapshots reject stale dates, impossible counts, and unrelated user data', () => {
+  const valid = { date, current: 1, max: 4, completed_today: true, last_completed_date: date };
+  for (const patch of [
+    { date: '2026-11-20' }, { current: -1 }, { current: 5 }, { max: 0 }, { current: 1.5 },
+    { completed_today: false }, { last_completed_date: '2026-11-22' }, { last_completed_date: null },
+    { last_completed_date: '2026-11-19', completed_today: false }, { user_id: other }, { seed: 'hidden' },
+  ]) assert.throws(() => parseDailyStreaks({ ...valid, ...patch }, date), DailyDataError);
+});
 
 test('daily dates, names and friend codes normalize safely', () => {
   assert.equal(normalizeDailyDate(date), date);
