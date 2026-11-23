@@ -509,6 +509,104 @@
 .arena-timer>span {
   color:var(--text)
 }
+.arena-clock-controls {
+  display:flex;
+  align-items:center;
+  gap:13px;
+  flex-wrap:wrap;
+  justify-content:flex-end
+}
+.arena-pause-button {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  min-height:40px;
+  padding:8px 11px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  font-size:14px;
+  color:var(--accent)
+}
+.arena-paused {
+  min-height:570px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  text-align:center;
+  padding:36px 28px
+}
+.arena-paused>.eyebrow {
+  color:var(--muted);
+  font-size:10px
+}
+.arena-paused h2 {
+  font-size:26px;
+  letter-spacing:-.8px;
+  margin:12px 0
+}
+.arena-paused>p {
+  font-size:15px;
+  line-height:1.7;
+  color:var(--muted);
+  max-width:340px
+}
+.arena-paused-time {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font:22px Manrope,sans-serif;
+  font-variant-numeric:tabular-nums;
+  margin:17px 0
+}
+.arena-resume-countdown {
+  font:500 58px Manrope,sans-serif;
+  color:var(--accent);
+  margin:0 0 12px
+}
+.arena-resume-list {
+  list-style:none;
+  width:100%;
+  max-width:340px;
+  margin:20px 0;
+  padding:0;
+  text-align:left
+}
+.arena-resume-list li {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:15px;
+  padding:10px 0;
+  border-bottom:1px solid var(--line);
+  font-size:14px
+}
+.arena-resume-list li>span:first-child {
+  min-width:0;
+  overflow-wrap:anywhere
+}
+.arena-resume-list li>span:last-child {
+  display:flex;
+  align-items:center;
+  gap:6px;
+  color:var(--muted);
+  flex-shrink:0
+}
+.arena-paused>button {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  min-height:44px;
+  min-width:200px
+}
+.arena-paused>small {
+  color:var(--muted);
+  margin-top:14px;
+  font-size:12px;
+  line-height:1.7
+}
 .arena-board .cell:disabled {
   opacity:1
 }
@@ -547,6 +645,16 @@
 .arena-finish>svg {
   flex-shrink:0;
   margin-top:2px
+}
+.arena-finish>div {
+  flex:1;
+  min-width:0
+}
+.arena-new-game {
+  width:100%;
+  margin-top:17px;
+  min-height:44px;
+  font-size:14px
 }
 .arena-finish h3 {
   font-size:19px;

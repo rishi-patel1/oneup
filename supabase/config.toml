@@ -4,6 +4,10 @@ project_id = "numora"
 verify_jwt = true
 entrypoint = "./functions/numora-create-room/index.ts"
 
+[functions.numora-rematch-room]
+verify_jwt = true
+entrypoint = "./functions/numora-rematch-room/index.ts"
+
 [functions.numora-daily]
 verify_jwt = true
 entrypoint = "./functions/numora-daily/index.ts"

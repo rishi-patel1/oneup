@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Clock3, Copy, Eraser, Eye, Flag, LoaderCircle, LogOut, Pencil, Redo2, RotateCcw, Sparkles, Trophy, Undo2, Users } from 'lucide-react';
+import { Check, Clock3, Copy, Eraser, Eye, Flag, LoaderCircle, LogOut, Pause, Pencil, Play, Redo2, RotateCcw, Sparkles, Trophy, Undo2, Users } from 'lucide-react';
 import { APP_NAME } from '../branding';
 import BrandMark from './BrandMark';
 import AccountButton from './AccountButton';
 import type { Difficulty, Puzzle } from '../game/engine';
 import { getSegments, isSolved } from '../game/engine';
 import { createSession, restoreSession, serializeSession, sessionReducer, type Session, type SessionAction } from '../game/session';
-import { createRoom, explainError, getRoom, getSpectatorState, getUserId, isSupabaseConfigured, joinRoom, leaveRoom, saveProgress, setReady, startRoom, submitSolution, watchRoom, type PublicPuzzle, type RoomPlayer, type RoomState, type SpectatorState } from '../multiplayer/api';
+import { createRoomSnapshotGate, getRoomTiming } from '../multiplayer/model';
+import { createRoom, explainError, getRoom, getSpectatorState, getUserId, isSupabaseConfigured, joinRoom, leaveRoom, pauseRoom, rematchRoom, saveProgress, setReady, setResumeReady, startRoom, submitSolution, watchRoom, type PublicPuzzle, type RoomPlayer, type RoomState, type SpectatorState } from '../multiplayer/api';
 import './competition.css';
 
 const ROOM_KEY = 'numora:competition:room';
@@ -44,7 +45,7 @@ export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => voi
   const [clockOffset, setClockOffset] = useState(0);
   const [now, setNow] = useState(Date.now());
   const codeRef = useRef('');
-  const lastServerTime = useRef(0);
+  const snapshotGate = useRef(createRoomSnapshotGate());
   const epoch = useRef(0);
   const mounted = useRef(true);
   const latestSnapshot = useRef<RoomState | null>(snapshot);
@@ -54,8 +55,7 @@ export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => voi
   const accept = useCallback((next: RoomState) => {
     if (!mounted.current || next.room.code !== codeRef.current) return;
     const serverTime = Date.parse(next.server_now);
-    if (!Number.isFinite(serverTime) || serverTime < lastServerTime.current) return;
-    lastServerTime.current = serverTime;
+    if (!snapshotGate.current(next)) return;
     setClockOffset(serverTime - Date.now());
     setNow(Date.now());
     setSnapshot(next);
@@ -63,7 +63,7 @@ export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => voi
   }, []);
   const enter = useCallback((next: RoomState) => {
     codeRef.current = next.room.code;
-    lastServerTime.current = 0;
+    snapshotGate.current = createRoomSnapshotGate();
     setPresence(null);
     remember(ROOM_KEY, next.room.code);
     updateRoomUrl(next.room.code);
@@ -108,7 +108,7 @@ export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => voi
     catch { setSyncWarning('Live updates are reconnecting. The room will keep checking for changes.'); }
     const interval = window.setInterval(() => {
       const current = latestSnapshot.current;
-      const pace = current?.room.status === 'racing' && !current.puzzle ? 500 : 3000;
+      const pace = current?.room.paused_at || (current?.room.status === 'racing' && !current.puzzle) ? 500 : 3000;
       if (Date.now() - lastPoll >= pace) void refresh();
     }, 500);
     void refresh();
@@ -141,13 +141,21 @@ export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => voi
 
   const exitRoom = async () => {
     if (!snapshot || busy) return;
+    const token = ++epoch.current;
     setBusy(true); setError('');
     try {
-      await leaveRoom(snapshot.room.code);
-      epoch.current++; codeRef.current = ''; lastServerTime.current = 0;
-      forget(ROOM_KEY); updateRoomUrl(); setSnapshot(null); setPresence(null); setSyncWarning('');
-    } catch (cause) { setError(explainError(cause)); }
-    finally { if (mounted.current) setBusy(false); }
+      await leaveRoom(snapshot.room.code, snapshot.room.round_id);
+      if (!mounted.current || token !== epoch.current) return;
+      // Ignore any late room poll before showing the fresh-room form.
+      codeRef.current = ''; snapshotGate.current = createRoomSnapshotGate();
+      forget(ROOM_KEY); updateRoomUrl();
+      setCode(''); setEntryMode('create');
+      setSize(snapshot.room.size); setDifficulty(snapshot.room.difficulty);
+      const previousName = snapshot.players.find(player => player.user_id === userId)?.nickname;
+      if (previousName) { setNickname(previousName); remember(NAME_KEY, previousName); }
+      setSnapshot(null); setPresence(null); setSyncWarning('');
+    } catch (cause) { if (mounted.current && token === epoch.current) setError(explainError(cause)); }
+    finally { if (mounted.current && token === epoch.current) setBusy(false); }
   };
 
   const retryRoomSync = async () => {
@@ -177,11 +185,11 @@ export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => voi
           {error && <p role="alert" className="arena-error">{error}</p>}
           <button className="primary-button arena-entry-submit" disabled={busy || !isSupabaseConfigured}>{busy ? <LoaderCircle className="spin" size={17} /> : entryMode === 'create' ? <Sparkles size={17} /> : <Users size={17} />}{busy ? 'Connecting…' : entryMode === 'create' ? 'Make a little competition' : 'Join the challenge'}</button>
         </form>
-        <p className="arena-entry-caption">Nicknames only. Notes and undo are welcome.<br />Hints, mistake checking, and pauses sit this one out.</p>
+        <p className="arena-entry-caption">Nicknames only. Notes and undo are welcome.<br />Hints and mistake checking sit this one out. Anyone can pause the shared clock.</p>
       </section>
-    </main> : <RoomScreen key={snapshot.room.id} snapshot={snapshot} userId={userId} serverNow={now + clockOffset} presence={presence} onSnapshot={accept} onLeave={() => { void exitRoom(); }} leaving={busy} />}
+    </main> : <RoomScreen key={`${snapshot.room.id}:${snapshot.room.round_id}`} snapshot={snapshot} userId={userId} serverNow={now + clockOffset} presence={presence} onSnapshot={accept} onLeave={() => { void exitRoom(); }} leaving={busy} />}
     {snapshot && (error || syncWarning) && <div className={`arena-room-message ${error ? 'arena-error' : 'arena-notice'}`} role={error ? 'alert' : 'status'}><span>{error || syncWarning}</span>{syncWarning && !error && <button className="secondary-button arena-sync-retry" disabled={syncRetrying} onClick={() => { void retryRoomSync(); }}>{syncRetrying ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}{syncRetrying ? 'Reconnecting…' : 'Retry room sync'}</button>}</div>}
-    <footer className="site-footer arena-footer"><span>Small grids. Shared headspace.</span><span>Your official time is measured by the room server.</span></footer>
+    <footer className="site-footer arena-footer"><span>Small grids. Shared headspace.</span><span>Your official time excludes shared pauses.</span></footer>
   </div>;
 }
 
@@ -219,12 +227,14 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const submittedSignature = useRef('');
-  const latest = useRef({ snapshot, puzzle, own, onSnapshot });
-  latest.current = { snapshot, puzzle, own, onSnapshot };
-  const draftKey = `numora:competition:draft:${room.id}:${userId}`;
+  const latest = useRef({ snapshot, puzzle, own, onSnapshot, serverNow });
+  latest.current = { snapshot, puzzle, own, onSnapshot, serverNow };
+  const draftKey = room.round_id === room.id ? `numora:competition:draft:${room.id}:${userId}`
+    : `numora:competition:draft:${room.id}:${room.round_id}:${userId}`;
   const startTime = room.starts_at ? Date.parse(room.starts_at) : Infinity;
   const countdown = room.status === 'racing' && serverNow < startTime;
-  const canPlay = Boolean(puzzle && game && room.status === 'racing' && !countdown && !own?.finished_at && !submitBusy);
+  const roomTiming = getRoomTiming(room, serverNow);
+  const canPlay = Boolean(puzzle && game && room.status === 'racing' && !countdown && !roomTiming.paused && !own?.finished_at && !submitBusy && !actionBusy);
   const effectiveNotes = notesMode || shiftHeld;
   const editableCount = puzzle?.givens.filter(value => !value).length ?? room.size ** 2;
   const segments = useMemo(() => puzzle ? getSegments(puzzle) : { rows: [], columns: [] }, [puzzle]);
@@ -268,12 +278,12 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   const flushProgress = useCallback(async () => {
     const current = latest.current;
     const session = gameRef.current;
-    if (!mounted.current || inFlight.current || !dirty.current || !session || !current.puzzle || current.own?.finished_at || current.snapshot.room.status !== 'racing') return;
+    if (!mounted.current || inFlight.current || !dirty.current || !session || !current.puzzle || current.own?.finished_at || current.snapshot.room.status !== 'racing' || getRoomTiming(current.snapshot.room, current.serverNow).paused) return;
     inFlight.current = true;
     const sentRevision = revision.current;
     let failed = false;
     try {
-      const next = await saveProgress(room.code, [...session.values], session.notes.map(notes => [...notes]));
+      const next = await saveProgress(room.code, [...session.values], session.notes.map(notes => [...notes]), room.round_id, current.snapshot.room.pause_version);
       if (!mounted.current) return;
       current.onSnapshot(next);
       if (sentRevision === revision.current) {
@@ -285,15 +295,15 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
       if (mounted.current) setSaveStatus('retrying');
     } finally {
       inFlight.current = false;
-      if (mounted.current && dirty.current) retryTimer.current = setTimeout(() => { void flushProgress(); }, failed ? 2000 : 200);
+      if (mounted.current && dirty.current && !getRoomTiming(latest.current.snapshot.room, latest.current.serverNow).paused) retryTimer.current = setTimeout(() => { void flushProgress(); }, failed ? 2000 : 200);
     }
-  }, [room.code, persistDraft]);
+  }, [room.code, room.round_id, persistDraft]);
 
   useEffect(() => {
-    if (!game || !dirty.current) return;
+    if (!game || !dirty.current || roomTiming.paused) return;
     const timer = setTimeout(() => { void flushProgress(); }, 600);
     return () => clearTimeout(timer);
-  }, [game?.values, game?.notes, flushProgress]);
+  }, [game?.values, game?.notes, flushProgress, roomTiming.paused, room.pause_version]);
 
   const edit = useCallback((action: SessionAction) => {
     if (!canPlay || !gameRef.current || submitBusy) return;
@@ -343,12 +353,13 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
     submittedSignature.current = signature;
     setSubmitBusy(true); setError('');
     try {
-      const next = await submitSolution(room.code, session.values, session.notes);
+      const next = await submitSolution(room.code, session.values, session.notes, room.round_id, room.pause_version);
       if (!mounted.current) return;
       dirty.current = false; setSaveStatus('saved'); onSnapshot(next);
     } catch (cause) { if (mounted.current) setError(explainError(cause)); }
     finally { if (mounted.current) setSubmitBusy(false); }
-  }, [puzzle, canPlay, submitBusy, room.code, onSnapshot]);
+  }, [puzzle, canPlay, submitBusy, room.code, room.round_id, room.pause_version, onSnapshot]);
+  useEffect(() => { submittedSignature.current = ''; }, [room.pause_version]);
   useEffect(() => {
     if (!puzzle || !game || !canPlay || !isSolved(puzzle, game.values)) return;
     if (submittedSignature.current === JSON.stringify(game.values)) return;
@@ -367,19 +378,21 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
     catch { setCopyMessage('Share the room code or this page’s address.'); }
   };
   const readyToStart = players.length >= 2 && players.every(player => player.ready);
-  const elapsed = own?.elapsed_ms ?? (room.status === 'lobby' ? 0 : Math.max(0, serverNow - startTime));
+  const elapsed = own?.elapsed_ms ?? roomTiming.elapsed;
+  const resumePlayers = players.filter(player => player.active);
 
   return <main className="arena-room">
     <section className="arena-room-top"><div><div className="eyebrow">YOUR SHARED LITTLE CHALLENGE</div><h1>{room.status === 'lobby' ? 'Room for some company.' : own?.finished_at ? 'A lovely finish.' : 'Find your moment.'}</h1><p>{room.size} × {room.size}<span className="text-dot">·</span>{room.difficulty}<span className="text-dot">·</span>{players.length} {players.length === 1 ? 'player' : 'players'}</p></div><div className="arena-room-code"><span>ROOM CODE</span><div><strong>{room.code}</strong><button className="icon-button" aria-label="Copy room invitation" onClick={() => { void copyInvite(); }}><Copy size={18} /></button></div><small role="status">{copyMessage || 'Invite someone into the grid.'}</small></div></section>
     <div className="arena-room-layout">
       <section className="arena-play-panel">
-        {room.status === 'lobby' ? <div className="arena-lobby"><span className="arena-large-icon"><Users size={32} /></span><div className="eyebrow">A LITTLE ANTICIPATION</div><h2>Good company. Good headspace.</h2><p>Share the room code. Everyone gets the same fresh puzzle after a shared countdown.</p><div className="arena-lobby-rules"><span><Check size={16} /> Notes and undo</span><span><Clock3 size={16} /> One continuous clock</span><span><Flag size={16} /> Fastest valid finish</span></div><button className={`primary-button ${own?.ready ? 'arena-ready' : ''}`} disabled={actionBusy || leaving} onClick={() => { void action(() => setReady(room.code, !own?.ready)); }}>{actionBusy ? <LoaderCircle className="spin" size={16} /> : own?.ready ? <Check size={16} /> : <Flag size={16} />}{own?.ready ? 'Ready. Let’s do this.' : 'I’m ready'}</button>{room.host_id === userId ? <><button className="secondary-button arena-start" disabled={!readyToStart || actionBusy || leaving} onClick={() => { void action(() => startRoom(room.code)); }}>Start the challenge</button><p className="arena-lobby-detail">{players.length < 2 ? 'Invite at least one more player to begin.' : !readyToStart ? 'Waiting for everyone to be ready.' : 'Everyone is ready. Start when you are.'}</p></> : <p className="arena-lobby-detail">{own?.ready ? 'Waiting for the host to start the challenge.' : 'Mark yourself ready when you’re settled in.'}</p>}</div>
+        {room.status === 'lobby' ? <div className="arena-lobby"><span className="arena-large-icon"><Users size={32} /></span><div className="eyebrow">A LITTLE ANTICIPATION</div><h2>Good company. Good headspace.</h2><p>Share the room code. Everyone gets the same fresh puzzle after a shared countdown.</p><div className="arena-lobby-rules"><span><Check size={16} /> Notes and undo</span><span><Pause size={16} /> Shared pause, shared resume</span><span><Flag size={16} /> Fastest valid finish</span></div><button className={`primary-button ${own?.ready ? 'arena-ready' : ''}`} disabled={actionBusy || leaving} onClick={() => { void action(() => setReady(room.code, !own?.ready, room.round_id)); }}>{actionBusy ? <LoaderCircle className="spin" size={16} /> : own?.ready ? <Check size={16} /> : <Flag size={16} />}{own?.ready ? 'Ready. Let’s do this.' : 'I’m ready'}</button>{room.host_id === userId ? <><button className="secondary-button arena-start" disabled={!readyToStart || actionBusy || leaving} onClick={() => { void action(() => startRoom(room.code, room.round_id)); }}>Start the challenge</button><p className="arena-lobby-detail">{players.length < 2 ? 'Invite at least one more player to begin.' : !readyToStart ? 'Waiting for everyone to be ready.' : 'Everyone is ready. Start when you are.'}</p></> : <p className="arena-lobby-detail">{own?.ready ? 'Waiting for the host to start the challenge.' : 'Mark yourself ready when you’re settled in.'}</p>}</div>
+          : roomTiming.paused ? <section className="arena-paused" aria-label="Competition paused" aria-live="polite"><span className="arena-large-icon"><Pause size={30} /></span><div className="eyebrow">A SHARED BREATHER</div><h2>{roomTiming.resuming ? 'Starting together again.' : 'The room is paused.'}</h2><p>The clock is stopped and everyone’s grid is hidden.</p><div className="arena-paused-time"><Clock3 size={17} />{time(elapsed)}</div>{roomTiming.resuming ? <><strong className="arena-resume-countdown">{roomTiming.resumeSeconds}</strong><p>Everyone is ready. Play resumes together after three seconds.</p></> : <p>Every player must be ready before the three-second countdown starts.</p>}<ul className="arena-resume-list" aria-label="Players ready to resume">{resumePlayers.map(player => <li key={player.user_id}><span>{player.nickname}{player.user_id === userId ? ' (you)' : ''}</span><span>{player.resume_ready ? <Check size={16} /> : <Clock3 size={16} />}{player.resume_ready ? 'Ready' : 'Waiting'}</span></li>)}</ul>{own?.active && room.pause_id && <button className={own.resume_ready ? 'secondary-button' : 'primary-button'} disabled={actionBusy || leaving} onClick={() => { void action(() => setResumeReady(room.code, room.round_id, room.pause_id!, !own.resume_ready)); }}>{actionBusy ? <LoaderCircle className="spin" size={17} /> : own.resume_ready ? <Pause size={17} /> : <Play size={17} />}{own.resume_ready ? 'Stay paused' : 'Ready to resume'}</button>}{own && !own.active && <button className="primary-button" disabled={actionBusy || leaving} onClick={() => { void action(() => joinRoom(room.code, own.nickname)); }}><Users size={17} />Rejoin room</button>}<small>{own?.resume_ready ? 'You can choose Stay paused if you need more time.' : 'Your entries and pencil notes are kept for you.'}</small></section>
           : countdown || !puzzle || !game ? <div className="arena-countdown" aria-live="polite"><span className="eyebrow">SAME GRID. SAME START.</span><strong>{countdown ? Math.max(1, Math.ceil((startTime - serverNow) / 1000)) : <LoaderCircle className="spin" size={43} />}</strong><h2>{countdown ? 'A little focus…' : 'Opening your grid…'}</h2><p>{countdown ? 'Your puzzle appears when the countdown ends.' : 'Your official clock is running. The room is syncing your puzzle.'}</p></div>
-            : <div className="arena-game"><div className="arena-game-top"><div><span className="eyebrow">{spectatingPlayer ? 'POST-FINISH SPECTATOR' : 'YOUR SIDE OF THE CHALLENGE'}</span><h2>{spectatingPlayer ? `Spectating ${spectatingPlayer.nickname}` : own?.nickname ?? 'Your grid'}</h2></div><div className="arena-timer"><Clock3 size={17} /><span>{spectatingPlayer && <small className="arena-own-time-label">Your time</small>}{time(elapsed)}</span></div></div>{spectatingPlayer && snapshot.puzzle ? <SpectatorBoard key={spectatingPlayer.user_id} roomCode={room.code} roomId={room.id} player={spectatingPlayer} puzzle={snapshot.puzzle} refreshKey={snapshot.server_now} onBack={() => setSpectatingId(null)} /> : <><div className={`puzzle-board arena-board ${own?.finished_at ? 'is-solved' : ''}`} ref={boardRef} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${puzzle.size} by ${puzzle.size} competition grid`} aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
+            : <div className="arena-game"><div className="arena-game-top"><div><span className="eyebrow">{spectatingPlayer ? 'POST-FINISH SPECTATOR' : 'YOUR SIDE OF THE CHALLENGE'}</span><h2>{spectatingPlayer ? `Spectating ${spectatingPlayer.nickname}` : own?.nickname ?? 'Your grid'}</h2></div><div className="arena-clock-controls"><div className="arena-timer"><Clock3 size={17} /><span>{spectatingPlayer && <small className="arena-own-time-label">Your time</small>}{time(elapsed)}</span></div>{!own?.finished_at && <button className="arena-pause-button" aria-label="Pause for everyone" disabled={actionBusy || leaving || submitBusy} onClick={() => { void action(() => pauseRoom(room.code, room.round_id, room.pause_version)); }}><Pause size={16} /><span>Pause</span></button>}</div></div>{spectatingPlayer && snapshot.puzzle ? <SpectatorBoard key={spectatingPlayer.user_id} roomCode={room.code} roomId={room.id} roundId={room.round_id} pauseVersion={room.pause_version} player={spectatingPlayer} puzzle={snapshot.puzzle} refreshKey={snapshot.server_now} onBack={() => setSpectatingId(null)} /> : <><div className={`puzzle-board arena-board ${own?.finished_at ? 'is-solved' : ''}`} ref={boardRef} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${puzzle.size} by ${puzzle.size} competition grid`} aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
               const index = row * puzzle.size + column, given = Boolean(puzzle.givens[index]), value = game.values[index];
               const across = segments.rows.find(run => run.includes(index))!, down = segments.columns.find(run => run.includes(index))!;
               return <button key={index} role="gridcell" aria-selected={selected === index} aria-readonly={given} aria-label={`Row ${row + 1}, column ${column + 1}, ${value || 'empty'}${given ? ', fixed clue' : ''}${!value && game.notes[index].length ? `, notes ${game.notes[index].join(', ')}` : ''}. Across length ${across.length}, down length ${down.length}.`} className={`cell ${given ? 'given' : ''} ${selected === index ? 'selected' : ''} ${peers.has(index) ? 'peer' : ''}`} data-race-cell={index} tabIndex={selected === index ? 0 : -1} onClick={() => setSelected(index)} disabled={!canPlay} style={{ borderRightWidth: column === puzzle.size - 1 ? 0 : puzzle.rightWalls[index] ? 3 : 1, borderBottomWidth: row === puzzle.size - 1 ? 0 : puzzle.bottomWalls[index] ? 3 : 1, borderRightColor: puzzle.rightWalls[index] ? 'var(--grid)' : 'var(--cell-line)', borderBottomColor: puzzle.bottomWalls[index] ? 'var(--grid)' : 'var(--cell-line)' }}>{value ? <span className="cell-value">{value}</span> : <span className="cell-notes" aria-hidden="true">{Array.from({ length: Math.max(6, puzzle.size) }, (_, n) => <span key={n}>{game.notes[index].includes(n + 1) ? n + 1 : ''}</span>)}</span>}</button>;
-            })}</div>)}</div><div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>No hints. Your own deductions.</span></div></>}{own?.finished_at ? <div className="arena-finish"><Trophy size={25} /><div><h3>Beautifully solved.</h3><p>Official time: {time(own.elapsed_ms ?? 0)}.{String(Math.round((own.elapsed_ms ?? 0) % 1000)).padStart(3, '0')}</p><span>{room.status === 'finished' ? 'The results are in.' : 'Your time is locked. Cheer the others on.'}</span></div></div> : <><div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Competition number pad">{Array.from({ length: puzzle.size }, (_, index) => index + 1).map(value => <button key={value} disabled={!canPlay || Boolean(puzzle.givens[selected])} className={effectiveNotes ? 'note-key' : ''} aria-label={`${effectiveNotes ? 'Toggle note' : 'Enter'} ${value}`} onClick={event => enterNumber(value, notesMode || event.shiftKey)}>{value}</button>)}</div><div className="game-tools arena-tools"><button disabled={!canPlay || !game.history.length} onClick={() => edit({ type: 'undo' })}><Undo2 size={19} /><span>Undo</span></button><button disabled={!canPlay || !game.future.length} onClick={() => edit({ type: 'redo' })}><Redo2 size={19} /><span>Redo</span></button><button disabled={!canPlay || Boolean(puzzle.givens[selected])} onClick={() => edit({ type: 'clear-cell', index: selected, puzzle })}><Eraser size={19} /><span>Erase</span></button><button disabled={!canPlay} className={effectiveNotes ? 'tool-active' : ''} aria-pressed={effectiveNotes} onClick={() => setNotesMode(value => !value)} title="Pencil notes (N, or hold Shift)"><Pencil size={19} /><span>Notes <small>{effectiveNotes ? 'ON' : 'OFF'}</small></span></button></div><button className="primary-button arena-submit" disabled={!canPlay || !game.values.every(Boolean)} onClick={() => { void submit(); }}>{submitBusy ? <LoaderCircle className="spin" size={17} /> : <Flag size={17} />}{submitBusy ? 'Checking your finish…' : 'Submit solution'}</button><p className="arena-save-status" role="status">{saveStatus === 'saved' ? 'Your progress is synced with the room.' : saveStatus === 'pending' ? 'Saving your progress…' : draftAvailable ? 'Progress saved on this device. Retrying room sync…' : 'Room sync is disconnected and device storage is unavailable. Keep this tab open.'}</p></>}</div>}
+            })}</div>)}</div><div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>No hints. Your own deductions.</span></div></>}{own?.finished_at ? <div className="arena-finish"><Trophy size={25} /><div><h3>Beautifully solved.</h3><p>Official time: {time(own.elapsed_ms ?? 0)}.{String(Math.round((own.elapsed_ms ?? 0) % 1000)).padStart(3, '0')}</p><span>{room.status === 'finished' ? 'The results are in.' : 'Your time is locked. Cheer the others on.'}</span>{room.host_id === userId ? <><button className="primary-button arena-new-game" disabled={room.status !== 'finished' || leaving || actionBusy || submitBusy} onClick={() => { void action(() => rematchRoom(room.code, room.round_id)); }}>{actionBusy ? <LoaderCircle className="spin" size={17} /> : <RotateCcw size={17} />}{actionBusy ? 'Making the next puzzle…' : 'New game'}</button><span>{room.status === 'finished' ? 'Same room, same players. Everyone will ready up again.' : 'Waiting for everyone to finish before the next round.'}</span></> : <span>{room.status === 'finished' ? 'Waiting for the host to create the next game. You’ll stay in this room.' : 'The host can create the next game after everyone finishes.'}</span>}</div></div> : <><div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Competition number pad">{Array.from({ length: puzzle.size }, (_, index) => index + 1).map(value => <button key={value} disabled={!canPlay || Boolean(puzzle.givens[selected])} className={effectiveNotes ? 'note-key' : ''} aria-label={`${effectiveNotes ? 'Toggle note' : 'Enter'} ${value}`} onClick={event => enterNumber(value, notesMode || event.shiftKey)}>{value}</button>)}</div><div className="game-tools arena-tools"><button disabled={!canPlay || !game.history.length} onClick={() => edit({ type: 'undo' })}><Undo2 size={19} /><span>Undo</span></button><button disabled={!canPlay || !game.future.length} onClick={() => edit({ type: 'redo' })}><Redo2 size={19} /><span>Redo</span></button><button disabled={!canPlay || Boolean(puzzle.givens[selected])} onClick={() => edit({ type: 'clear-cell', index: selected, puzzle })}><Eraser size={19} /><span>Erase</span></button><button disabled={!canPlay} className={effectiveNotes ? 'tool-active' : ''} aria-pressed={effectiveNotes} onClick={() => setNotesMode(value => !value)} title="Pencil notes (N, or hold Shift)"><Pencil size={19} /><span>Notes <small>{effectiveNotes ? 'ON' : 'OFF'}</small></span></button></div><button className="primary-button arena-submit" disabled={!canPlay || !game.values.every(Boolean)} onClick={() => { void submit(); }}>{submitBusy ? <LoaderCircle className="spin" size={17} /> : <Flag size={17} />}{submitBusy ? 'Checking your finish…' : 'Submit solution'}</button><p className="arena-save-status" role="status">{saveStatus === 'saved' ? 'Your progress is synced with the room.' : saveStatus === 'pending' ? 'Saving your progress…' : draftAvailable ? 'Progress saved on this device. Retrying room sync…' : 'Room sync is disconnected and device storage is unavailable. Keep this tab open.'}</p></>}</div>}
         {error && <p className="arena-error" role="alert">{error}</p>}
       </section>
       <aside className="arena-players" aria-label="Players and results"><div className="arena-players-heading"><span className="eyebrow">{room.status === 'lobby' ? 'THE COMPANY' : room.status === 'finished' ? 'THE RESULTS' : 'THE CHALLENGE'}</span><span>{players.length} / 8</span></div><h2>{room.status === 'lobby' ? 'Make yourself at home.' : 'One number at a time.'}</h2><div className="arena-player-list">{rankedPlayers.map(player => {
@@ -387,8 +400,8 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
         const rank = finished ? 1 + finishedPlayers.filter(other => (other.elapsed_ms ?? Infinity) < (player.elapsed_ms ?? Infinity)).length : null;
         const online = presence === null ? null : player.user_id === userId || presence.includes(player.user_id);
         const percent = Math.min(100, Math.round(player.progress_count / Math.max(1, editableCount) * 100));
-        return <div className={`arena-player ${player.user_id === userId ? 'is-you' : ''}`} key={player.user_id}><div className="arena-player-line"><span className={`arena-player-avatar ${rank === 1 ? 'winner' : ''}`}>{rank === 1 ? <Trophy size={18} /> : rank ?? player.nickname.slice(0, 1).toUpperCase()}</span><span className="arena-player-name"><strong>{player.nickname}{player.user_id === userId && <small>you</small>}</strong><span>{room.status === 'lobby' ? player.ready ? 'Ready to go' : 'Getting settled' : finished ? `Finished in ${time(player.elapsed_ms ?? 0)}` : countdown ? 'Starting together' : `${percent}% filled`}{player.user_id === room.host_id && <span className="arena-host-label"> · host</span>}</span></span>{room.status === 'lobby' ? player.ready ? <Check className="arena-ready-check" size={18} /> : online === false ? <span className="arena-away">away</span> : null : finished ? <span className="arena-rank">#{rank}</span> : online === false ? <span className="arena-away">away</span> : null}</div>{room.status !== 'lobby' && !countdown && <div className="progress-track" role="progressbar" aria-label={`${player.nickname} progress`} aria-valuenow={finished ? 100 : percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${finished ? 100 : percent}%` }} /></div>}{own?.finished_at && player.user_id !== userId && <button className="arena-spectate-button" aria-pressed={spectatingPlayer?.user_id === player.user_id} disabled={leaving} onClick={() => { setSpectatingId(player.user_id); setError(''); }}><Eye size={15} /><span>Spectate {player.nickname}</span></button>}</div>;
-      })}</div><div className="arena-fair-play"><Flag size={17} /><p>Same puzzle. Shared start.<br /><span>Notes and undo are allowed. The clock keeps running until your valid finish reaches the server.</span></p></div><button className="arena-leave" disabled={leaving || actionBusy || submitBusy} onClick={onLeave}><LogOut size={15} />{leaving ? 'Leaving…' : 'Leave room'}</button></aside>
+        return <div className={`arena-player ${player.user_id === userId ? 'is-you' : ''}`} key={player.user_id}><div className="arena-player-line"><span className={`arena-player-avatar ${rank === 1 ? 'winner' : ''}`}>{rank === 1 ? <Trophy size={18} /> : rank ?? player.nickname.slice(0, 1).toUpperCase()}</span><span className="arena-player-name"><strong>{player.nickname}{player.user_id === userId && <small>you</small>}</strong><span>{room.status === 'lobby' ? player.ready ? 'Ready to go' : 'Getting settled' : roomTiming.paused ? player.resume_ready ? 'Ready to resume' : player.active ? 'Paused' : 'Left room' : finished ? `Finished in ${time(player.elapsed_ms ?? 0)}` : countdown ? 'Starting together' : `${percent}% filled`}{player.user_id === room.host_id && <span className="arena-host-label"> · host</span>}</span></span>{room.status === 'lobby' ? player.ready ? <Check className="arena-ready-check" size={18} /> : online === false ? <span className="arena-away">away</span> : null : finished ? <span className="arena-rank">#{rank}</span> : online === false ? <span className="arena-away">away</span> : null}</div>{room.status !== 'lobby' && !countdown && <div className="progress-track" role="progressbar" aria-label={`${player.nickname} progress`} aria-valuenow={finished ? 100 : percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${finished ? 100 : percent}%` }} /></div>}{own?.finished_at && player.user_id !== userId && <button className="arena-spectate-button" aria-pressed={spectatingPlayer?.user_id === player.user_id} disabled={leaving || roomTiming.paused} onClick={() => { setSpectatingId(player.user_id); setError(''); }}><Eye size={15} /><span>Spectate {player.nickname}</span></button>}</div>;
+      })}</div><div className="arena-fair-play"><Flag size={17} /><p>Same puzzle. Shared start.<br /><span>Notes and undo are allowed. A pause stops the clock for everyone; all players must be ready to resume.</span></p></div><button className="arena-leave" disabled={leaving || actionBusy || submitBusy} onClick={onLeave}><LogOut size={15} />{leaving ? 'Leaving…' : 'Leave room'}</button></aside>
     </div>
   </main>;
 }
@@ -396,6 +409,8 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
 interface SpectatorBoardProps {
   roomCode: string;
   roomId: string;
+  roundId: string;
+  pauseVersion: number;
   player: RoomPlayer;
   puzzle: PublicPuzzle;
   refreshKey: string;
@@ -403,7 +418,7 @@ interface SpectatorBoardProps {
 }
 
 /** Opponent progress is held only in this mounted, post-finish view. */
-function SpectatorBoard({ roomCode, roomId, player, puzzle, refreshKey, onBack }: SpectatorBoardProps) {
+function SpectatorBoard({ roomCode, roomId, roundId, pauseVersion, player, puzzle, refreshKey, onBack }: SpectatorBoardProps) {
   const [progress, setProgress] = useState<SpectatorState | null>(null);
   const [error, setError] = useState('');
   const [fetching, setFetching] = useState(false);
@@ -423,7 +438,7 @@ function SpectatorBoard({ roomCode, roomId, player, puzzle, refreshKey, onBack }
       const timeout = setTimeout(() => { timedOut = true; pending.abort(); }, 12_000);
       setFetching(true);
       try {
-        const next = await getSpectatorState(roomCode, player.user_id, puzzle, pending.signal);
+        const next = await getSpectatorState(roomCode, player.user_id, puzzle, pending.signal, roundId, pauseVersion);
         if (stopped) return;
         if (next.room_id !== roomId || next.player_id !== player.user_id) {
           throw new Error('This live view no longer matches the selected player.');
@@ -452,7 +467,7 @@ function SpectatorBoard({ roomCode, roomId, player, puzzle, refreshKey, onBack }
       controller?.abort();
       requestRefresh.current = () => {};
     };
-  }, [roomCode, roomId, player.user_id, puzzle.id]);
+  }, [roomCode, roomId, roundId, pauseVersion, player.user_id, puzzle.id]);
 
   // Room broadcasts prompt a refresh too, without overlapping the regular poll.
   useEffect(() => { requestRefresh.current(); }, [refreshKey]);

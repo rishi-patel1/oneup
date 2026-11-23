@@ -16,6 +16,8 @@ export function explainDailyError(error: unknown): string {
   if (/failed to fetch|fetch failed|network|load failed|timeout|timed out/.test(text)) return 'Couldn’t connect. Check your connection and try again.';
   if (/google|permanent account|registered account/.test(text)) return 'Sign in with Google to use friends and ranked daily challenges.';
   if (/expired|current.*day/.test(text) && !/token|session/.test(text)) return 'A new daily challenge is here. Refresh to start today’s puzzle.';
+  if (/timing.*(?:changed|version)|timer.*changed|stale.*(?:timing|timer)/.test(text)) return 'Your daily timer changed on another device. Reconnect and try again.';
+  if (/paused/.test(text)) return 'Your daily attempt is paused. Resume before continuing.';
   if (/being prepared/.test(text)) return 'Today’s daily challenge is being prepared. Please try again in a moment.';
   if (/future|daily date|invalid date/.test(text)) return 'Choose an available daily challenge date.';
   if (source.status === 429 || /rate.limit|too many/.test(text)) return 'Too many attempts. Please wait a moment and try again.';
@@ -60,11 +62,14 @@ export function createDailyApi(client: SupabaseClient | null, identify: () => Pr
     return unwrap(data, error);
   }
   async function getDailyState(signal?: AbortSignal): Promise<DailyState> {
-    const api = service(); await identify();
+    const current = parseDailyState(await rpc('numora_get_daily_timed', {}, signal));
+    if (current.daily) return current;
+    const api = service();
     const { data, error } = await api.functions.invoke('numora-daily', { body: {}, ...(signal ? { signal } : {}) });
-    return parseDailyState(await unwrap(data, error));
+    await unwrap(data, error);
+    return parseDailyState(await rpc('numora_get_daily_timed', {}, signal));
   }
-  async function startDaily(): Promise<DailyState> { return parseDailyState(await rpc('numora_start_daily', {})); }
+  async function startDaily(): Promise<DailyState> { return parseDailyState(await rpc('numora_start_daily_timed', {})); }
   async function getDailyStreaks(date: string, signal?: AbortSignal): Promise<DailyStreaks> {
     const expectedDate = normalizeDailyDate(date);
     return parseDailyStreaks(await rpc('numora_daily_streaks', {}, signal), expectedDate);
@@ -74,8 +79,17 @@ export function createDailyApi(client: SupabaseClient | null, identify: () => Pr
     if (progress.values.length !== 36) throw new DailyInputError('The daily grid must contain 36 cells. Refresh to restore it.');
     return { p_date: day, p_values: progress.values, p_notes: progress.notes };
   }
-  async function saveDaily(date: string, values: number[], notes: number[][]): Promise<DailyState> { return parseDailyState(await rpc('numora_save_daily', boardArgs(date, values, notes))); }
-  async function submitDaily(date: string, values: number[], notes: number[][]): Promise<DailyState> { return parseDailyState(await rpc('numora_submit_daily', boardArgs(date, values, notes))); }
+  function timingVersion(value: number): number {
+    if (!Number.isSafeInteger(value) || value < 0) throw new DailyInputError('Refresh your daily attempt to load its current timer.');
+    return value;
+  }
+  async function saveDaily(date: string, values: number[], notes: number[][], version = 0): Promise<DailyState> { return parseDailyState(await rpc('numora_save_daily_timed', { ...boardArgs(date, values, notes), p_timing_version: timingVersion(version) })); }
+  async function submitDaily(date: string, values: number[], notes: number[][], version = 0): Promise<DailyState> { return parseDailyState(await rpc('numora_submit_daily_timed', { ...boardArgs(date, values, notes), p_timing_version: timingVersion(version) })); }
+  async function setDailyPaused(date: string, attemptId: string, paused: boolean, version: number): Promise<DailyState> {
+    const day = normalizeDailyDate(date), id = uuid(attemptId);
+    if (typeof paused !== 'boolean') throw new DailyInputError('Choose whether to pause or resume your daily attempt.');
+    return parseDailyState(await rpc('numora_set_daily_paused', { p_date: day, p_attempt_id: id, p_paused: paused, p_timing_version: timingVersion(version) }));
+  }
   async function getDailyLeaderboard(date: string, scope: LeaderboardScope = 'global', signal?: AbortSignal): Promise<DailyLeaderboard> {
     const day = normalizeDailyDate(date);
     if (scope !== 'global' && scope !== 'friends') throw new DailyInputError('Choose the global or friends leaderboard.');
@@ -95,7 +109,7 @@ export function createDailyApi(client: SupabaseClient | null, identify: () => Pr
   async function removeFriend(id: string): Promise<FriendsState> { return parseFriendsState(await rpc('numora_remove_friend', { p_user_id: uuid(id) })); }
   async function cancelFriendRequest(id: string): Promise<FriendsState> { return parseFriendsState(await rpc('numora_cancel_friend_request', { p_request_id: uuid(id) })); }
   async function updateProfile(name: string): Promise<Profile> { return parseProfile(await rpc('numora_update_profile', { p_display_name: normalizeDisplayName(name) })); }
-  return { getDailyState, getDailyStreaks, startDaily, saveDaily, submitDaily, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile };
+  return { getDailyState, getDailyStreaks, startDaily, saveDaily, submitDaily, setDailyPaused, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile };
 }
 
-export const { getDailyState, getDailyStreaks, startDaily, saveDaily, submitDaily, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile } = createDailyApi(supabase);
+export const { getDailyState, getDailyStreaks, startDaily, saveDaily, submitDaily, setDailyPaused, getDailyLeaderboard, getFriends, requestFriend, respondFriend, removeFriend, cancelFriendRequest, updateProfile } = createDailyApi(supabase);

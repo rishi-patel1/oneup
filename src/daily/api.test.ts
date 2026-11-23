@@ -19,13 +19,23 @@ function mock() {
   return { api, calls, signals, respond: (next: unknown, failure: unknown = null) => { data = next; error = failure; }, identityCalls: () => identities };
 }
 
-test('daily metadata is lazy and uses the server generation endpoint without starting an attempt', async () => {
+test('daily metadata is lazy, checks timed state, and generates only when the day is missing', async () => {
   const service = mock(); assert.equal(service.identityCalls(), 0);
   const controller = new AbortController();
   assert.equal((await service.api.getDailyState(controller.signal)).attempt, null);
-  assert.equal(service.identityCalls(), 1);
-  assert.deepEqual(service.calls, [{ name: 'numora-daily', args: { body: {}, signal: controller.signal } }]);
-  await service.api.startDaily(); assert.deepEqual(service.calls[1], { name: 'numora_start_daily', args: {} });
+  assert.equal(service.identityCalls(), 2);
+  assert.deepEqual(service.calls, [
+    { name: 'numora_get_daily_timed', args: {} },
+    { name: 'numora-daily', args: { body: {}, signal: controller.signal } },
+    { name: 'numora_get_daily_timed', args: {} },
+  ]);
+  assert.equal(service.signals[0], controller.signal);
+  assert.equal(service.signals[1], controller.signal);
+  await service.api.startDaily(); assert.deepEqual(service.calls[3], { name: 'numora_start_daily_timed', args: {} });
+  const ready = mock();
+  ready.respond({ ...metadata, daily: { id: target, date, size: 6, difficulty: 'Medium' } });
+  await ready.api.getDailyState();
+  assert.deepEqual(ready.calls, [{ name: 'numora_get_daily_timed', args: {} }]);
 });
 
 test('daily saves send immutable board snapshots with no client identity, ranking or time claims', async () => {
@@ -33,8 +43,8 @@ test('daily saves send immutable board snapshots with no client identity, rankin
   notes[0] = [6, 1];
   await service.api.saveDaily(date, values, notes); await service.api.submitDaily(date, values, notes);
   values[1] = 6; notes[0].push(2);
-  assert.deepEqual(Object.keys(service.calls[0].args as object).sort(), ['p_date', 'p_notes', 'p_values']);
-  assert.equal(service.calls[1].name, 'numora_submit_daily');
+  assert.deepEqual(Object.keys(service.calls[0].args as object).sort(), ['p_date', 'p_notes', 'p_timing_version', 'p_values']);
+  assert.equal(service.calls[1].name, 'numora_submit_daily_timed');
   assert.equal((service.calls[0].args as { p_values: number[] }).p_values[1], 0);
   assert.deepEqual((service.calls[0].args as { p_notes: number[][] }).p_notes[0], [1, 6]);
 });
@@ -95,4 +105,27 @@ test('server Google and expired-day gates remain authoritative with safe error f
   await assert.rejects(service.api.getDailyState(), /new daily challenge/);
   assert.match(explainDailyError({ code: 'PGRST202', message: 'internal SQL function missing' }), /not ready/);
   assert.equal(explainDailyError({ message: 'Internal server failure with token=secret' }), 'Something went wrong. Please try again.');
+});
+
+test('daily pause controls and board writes carry the server timer version without client elapsed time', async () => {
+  const service = mock();
+  await service.api.setDailyPaused(date, ` ${target.toUpperCase()} `, true, 3);
+  await service.api.setDailyPaused(date, target, false, 4);
+  const values = Array<number>(36).fill(0), notes = values.map(() => [] as number[]);
+  await service.api.saveDaily(date, values, notes, 5);
+  await service.api.submitDaily(date, values, notes, 5);
+  assert.deepEqual(service.calls[0], {name:'numora_set_daily_paused',args:{p_date:date,p_attempt_id:target,p_paused:true,p_timing_version:3}});
+  assert.deepEqual(service.calls[1], {name:'numora_set_daily_paused',args:{p_date:date,p_attempt_id:target,p_paused:false,p_timing_version:4}});
+  assert.equal((service.calls[2].args as {p_timing_version:number}).p_timing_version, 5);
+  assert.equal(service.calls[2].name, 'numora_save_daily_timed');
+  assert.equal(service.calls[3].name, 'numora_submit_daily_timed');
+  assert.deepEqual(Object.keys(service.calls[3].args as object).sort(), ['p_date','p_notes','p_timing_version','p_values']);
+  const invalid = mock();
+  await assert.rejects(invalid.api.setDailyPaused(date, 'bad', true, 0));
+  await assert.rejects(invalid.api.setDailyPaused(date, target, true, -1));
+  await assert.rejects(invalid.api.saveDaily(date, values, notes, 1.5));
+  assert.equal(invalid.identityCalls(), 0);
+  assert.equal(invalid.calls.length, 0);
+  assert.match(explainDailyError({message:'The daily timer has changed. Refresh before continuing.'}), /timer changed/);
+  assert.match(explainDailyError({message:'This attempt is paused.'}), /Resume before continuing/);
 });

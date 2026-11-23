@@ -188,6 +188,52 @@
   font-weight: 500;
   color: var(--text);
 }
+.daily-time-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.daily-pause-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 11px;
+  font-size: 13px;
+}
+.daily-paused-label {
+  color: var(--accent);
+  font-size: 13px;
+}
+.daily-pause-panel {
+  min-height: 470px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 34px 24px;
+  text-align: center;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.daily-pause-panel h3 {
+  font-size: 24px;
+  letter-spacing: -.7px;
+}
+.daily-pause-panel p {
+  max-width: 320px;
+  margin: 14px 0 25px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+.daily-pause-panel > .primary-button {
+  min-height: 44px;
+}
 .daily-attempt-mode {
   margin: 17px 0;
 }
@@ -919,6 +965,21 @@
   }
   .daily-timer > span {
     font-size: 16px;
+  }
+  .daily-time-controls {
+    max-width: 112px;
+    gap: 7px;
+  }
+  .daily-pause-button {
+    min-height: 36px;
+    padding: 7px 10px;
+  }
+  .daily-pause-panel {
+    min-height: 350px;
+    padding: 25px 16px;
+  }
+  .daily-pause-panel h3 {
+    font-size: 21px;
   }
   .daily-attempt-mode {
     margin: 15px 0;

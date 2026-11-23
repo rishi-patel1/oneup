@@ -177,3 +177,62 @@ test('spectator authorization failures provide useful feedback and remain server
   mock.failWith({ code: '22023', message: 'Choose another player in this room to watch.' });
   await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /Choose another player to watch/);
 });
+
+test('a rematch sends only the current room and round to the trusted generator', async () => {
+  const mock = mockClient(); const api = createCompetitionApi(mock.service);
+  const next = await api.rematchRoom(' abc123 ', roomId.toUpperCase());
+  assert.equal(next.room.code, 'ABC123');
+  assert.deepEqual(mock.functionCalls, [['numora-rematch-room', { body: { code: 'ABC123', round_id: roomId } }]]);
+  assert.deepEqual(mock.rpcCalls[0], { name: 'numora_get_room', args: { p_code: 'ABC123' } });
+  assert.equal(mock.counts().signups, 1);
+  const invalid = mockClient(); const invalidApi = createCompetitionApi(invalid.service);
+  await assert.rejects(invalidApi.rematchRoom('ABC123', 'bad-round'));
+  assert.equal(invalid.counts().sessionReads, 0);
+  assert.equal(invalid.functionCalls.length, 0);
+});
+
+test('round-aware requests bind readiness, start, progress, finish, leave, and spectating to one round', async () => {
+  const mock = mockClient(); const api = createCompetitionApi(mock.service);
+  const round = '44444444-4444-4444-8444-444444444444';
+  const values = [...spectatorPuzzle.givens], notes = Array.from({ length: 25 }, () => [] as number[]);
+  await api.setReady('ABC123', true, round);
+  await api.startRoom('ABC123', round);
+  await api.saveProgress('ABC123', values, notes, round);
+  await api.submitSolution('ABC123', values, notes, round);
+  await api.leaveRoom('ABC123', round);
+  mock.respondWith({room_id: roomId, player_id: targetId, values, notes, updated_at: now, server_now: now});
+  await api.getSpectatorState('ABC123', targetId, spectatorPuzzle, undefined, round);
+  assert.deepEqual(mock.rpcCalls.map(call => call.name), [
+    'numora_set_ready', 'numora_start_room', 'numora_save_progress', 'numora_submit_solution', 'numora_leave_room', 'numora_spectate_player',
+  ]);
+  for (const call of mock.rpcCalls) assert.equal(call.args.p_round_id, round);
+  const invalid = mockClient(); const invalidApi = createCompetitionApi(invalid.service);
+  assert.throws(() => invalidApi.setReady('ABC123', true, 'bad-round'));
+  await assert.rejects(invalidApi.leaveRoom('ABC123', 'bad-round'));
+  assert.equal(invalid.counts().sessionReads, 0);
+});
+
+test('rematch permission, unfinished race, and stale-round feedback stay actionable', () => {
+  assert.match(explainError({message: 'Only the room host can prepare another round.'}), /Only the room host can create the next game/);
+  assert.match(explainError({message: 'Wait until everyone has finished before starting another round.'}), /Wait for everyone to finish/);
+  assert.match(explainError({message: 'The room has already moved to another round. Reconnect to continue.'}), /moved to a new round/);
+});
+
+test('shared pause and resume votes carry round, pause cycle, and timer version without clock claims', async () => {
+  const mock=mockClient(),api=createCompetitionApi(mock.service);
+  const pauseId='55555555-5555-4555-8555-555555555555';
+  await api.pauseRoom(' abc123 ',roomId,2);
+  await api.setResumeReady('ABC123',roomId,pauseId,true);
+  await api.setResumeReady('ABC123',roomId,pauseId,false);
+  assert.deepEqual(mock.rpcCalls[0],{name:'numora_pause_room',args:{p_code:'ABC123',p_round_id:roomId,p_pause_version:2}});
+  assert.deepEqual(mock.rpcCalls[1],{name:'numora_set_resume_ready',args:{p_code:'ABC123',p_round_id:roomId,p_pause_id:pauseId,p_ready:true}});
+  assert.equal(mock.rpcCalls[2].args.p_ready,false);
+  assert.throws(()=>api.pauseRoom('ABC123',roomId,-1));
+  assert.throws(()=>api.setResumeReady('ABC123',roomId,'invalid',true));
+  const values=[...spectatorPuzzle.givens],notes=Array.from({length:25},()=>[]);
+  await api.saveProgress('ABC123',values,notes,roomId,5);
+  await api.submitSolution('ABC123',values,notes,roomId,5);
+  mock.respondWith({room_id:roomId,player_id:targetId,values,notes,updated_at:now,server_now:now});
+  await api.getSpectatorState('ABC123',targetId,spectatorPuzzle,undefined,roomId,5);
+  for(const call of mock.rpcCalls.slice(3))assert.equal(call.args.p_pause_version,5);
+});

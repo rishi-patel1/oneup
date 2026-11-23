@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomState, parseSpectatorState, RoomDataError } from './model';
+import { createRoomSnapshotGate, getRoomTiming, normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomState, parseSpectatorState, RoomDataError } from './model';
 
 const host = '11111111-1111-4111-8111-111111111111';
 const guest = '22222222-2222-4222-8222-222222222222';
@@ -142,4 +142,65 @@ test('spectator payloads fail closed on answer, seed, or unexpected nested data'
   }
   const hiddenPuzzle = { ...state().puzzle, solution: Array(25).fill(1) };
   assert.throws(() => parseSpectatorState(spectator(), guest, hiddenPuzzle), RoomDataError);
+});
+
+test('round identities distinguish rematches while legacy first rounds stay compatible', () => {
+  const raw = state();
+  assert.equal(parseRoomState(raw).room.round_id, roomId);
+  const nextRound = '44444444-4444-4444-8444-444444444444';
+  Object.assign(raw.room, { round_id: nextRound });
+  assert.equal(parseRoomState(raw).room.round_id, nextRound);
+  for (const round_id of ['', null, 2, 'not-a-round']) {
+    Object.assign(raw.room, { round_id });
+    assert.throws(() => parseRoomState(raw), RoomDataError);
+  }
+});
+
+test('delayed snapshots cannot reopen a retired round even within the same millisecond', () => {
+  const accept = createRoomSnapshotGate();
+  const first = parseRoomState(state());
+  first.server_now = '2026-11-19T12:00:01.000100Z';
+  const next = structuredClone(first);
+  next.room.round_id = '44444444-4444-4444-8444-444444444444';
+  next.server_now = '2026-11-19T12:00:01.000900Z';
+  assert.equal(Date.parse(first.server_now), Date.parse(next.server_now));
+  assert.equal(accept(first), true);
+  assert.equal(accept(next), true);
+  assert.equal(accept(first), false);
+  first.server_now = '2026-11-19T12:00:01.001000Z';
+  assert.equal(accept(first), false);
+  const later = structuredClone(next);
+  later.server_now = '2026-11-19T12:00:02.000Z';
+  assert.equal(accept(later), true);
+  assert.equal(accept(next), false);
+  assert.equal(createRoomSnapshotGate()(first), true);
+});
+
+test('shared pause clocks freeze and exclude both the break and resume countdown', () => {
+  const raw = state();
+  Object.assign(raw.room, {paused_at:'2026-11-19T12:00:00.500Z',resumes_at:null,paused_ms:200,pause_id:guest,pause_version:1});
+  const room = parseRoomState(raw).room;
+  assert.equal(getRoomTiming(room,Date.parse('2026-11-19T12:00:01Z')).elapsed,300);
+  assert.equal(getRoomTiming(room,Date.parse('2026-11-19T13:00:01Z')).elapsed,300);
+  room.resumes_at='2026-11-19T12:00:03.500Z';
+  const countdown=getRoomTiming(room,Date.parse('2026-11-19T12:00:01Z'));
+  assert.equal(countdown.paused,true); assert.equal(countdown.resuming,true);assert.equal(countdown.resumeSeconds,3);
+  assert.equal(countdown.elapsed,300);
+  const resumed=getRoomTiming(room,Date.parse('2026-11-19T12:00:04Z'));
+  assert.equal(resumed.paused,false);assert.equal(resumed.elapsed,800);
+  room.paused_ms=3200;room.paused_at=null;room.resumes_at=null;
+  assert.equal(getRoomTiming(room,Date.parse('2026-11-19T12:00:04Z')).elapsed,800);
+});
+
+test('pause payloads fail closed and older vote snapshots cannot undo a newer pause state', () => {
+  const raw=state();const base=parseRoomState(raw);
+  assert.equal(base.room.pause_version,0);assert.equal(base.room.paused_ms,0);assert.equal(base.players[0].resume_ready,false);
+  for(const invalid of [{pause_version:-1},{pause_version:null},{paused_ms:-1},{paused_at:now,pause_id:null,pause_version:1},{resumes_at:now}]) {
+    const bad=state();Object.assign(bad.room,invalid);assert.throws(()=>parseRoomState(bad),RoomDataError);
+  }
+  const accept=createRoomSnapshotGate();assert.equal(accept(base),true);
+  const paused=structuredClone(base);Object.assign(paused.room,{paused_at:now,pause_id:guest,pause_version:1});
+  assert.equal(accept(paused),true);assert.equal(accept(base),false);
+  const voted=structuredClone(paused);voted.room.pause_version=2;voted.players[0].resume_ready=true;
+  assert.equal(accept(voted),true);assert.equal(accept(paused),false);
 });

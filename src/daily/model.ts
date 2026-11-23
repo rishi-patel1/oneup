@@ -5,11 +5,28 @@ export interface Profile { id: string; display_name: string; friend_code: string
 export interface DailyAttempt {
   id: string; started_at: string; finished_at: string | null; elapsed_ms: number | null;
   ranked: boolean; values: number[]; notes: number[][];
+  paused_at: string | null; paused_ms: number; timing_version: number;
 }
 export interface DailyState {
   date: string; resets_at: string; server_now: string;
   daily: { id: string; date: string; size: 6; difficulty: 'Medium' } | null;
   puzzle: PublicPuzzle | null; attempt: DailyAttempt | null; profile: Profile | null;
+}
+
+export function getDailyElapsed(attempt: DailyAttempt, serverNow: number): number {
+  const clock = attempt.paused_at ? Math.min(serverNow, Date.parse(attempt.paused_at)) : serverNow;
+  return attempt.elapsed_ms ?? Math.max(0, clock - Date.parse(attempt.started_at) - attempt.paused_ms);
+}
+
+/** A late poll must not undo a pause, resume, or confirmed finish. */
+export function isCurrentDailySnapshot(previous: DailyState | null, next: DailyState, lastServerTime: number): boolean {
+  if (!previous) return true;
+  if (next.date < previous.date || (next.date === previous.date && Date.parse(next.server_now) < lastServerTime)) return false;
+  if (previous.attempt && next.attempt?.id === previous.attempt.id) {
+    if (next.attempt.timing_version < previous.attempt.timing_version) return false;
+    if (previous.attempt.finished_at && !next.attempt.finished_at) return false;
+  }
+  return true;
 }
 export interface DailyStreaks {
   date: string; current: number; max: number;
@@ -102,9 +119,17 @@ export function parseDailyState(raw: unknown): DailyState {
   if (raw.attempt !== null) {
     ensure(daily); puzzle = parsePuzzle(raw.puzzle, daily.id);
     const source = raw.attempt;
-    object(source, ['id', 'started_at', 'finished_at', 'elapsed_ms', 'ranked', 'values', 'notes']);
+    object(source, ['id', 'started_at', 'finished_at', 'elapsed_ms', 'ranked', 'values', 'notes', 'paused_at', 'paused_ms', 'timing_version']);
     ensure(isUuid(source.id) && timestamp(source.started_at) && typeof source.ranked === 'boolean');
     const started = Date.parse(source.started_at); ensure(started >= midnight && started <= server);
+    const hasTiming = ['paused_at', 'paused_ms', 'timing_version'].some(key => key in source);
+    const pausedAt = hasTiming ? source.paused_at : null;
+    const pausedMs = hasTiming ? source.paused_ms : 0;
+    const timingVersion = hasTiming ? source.timing_version : 0;
+    ensure((pausedAt === null || timestamp(pausedAt)) && integer(pausedMs) && integer(timingVersion));
+    const clockEnd = pausedAt === null ? server : Date.parse(pausedAt);
+    ensure(clockEnd >= started && clockEnd <= server && pausedMs <= clockEnd - started + 1);
+    if (pausedAt !== null || pausedMs > 0) ensure(timingVersion > 0);
     ensure((source.finished_at === null && source.elapsed_ms === null) || (timestamp(source.finished_at) && integer(source.elapsed_ms)));
     ensure(Array.isArray(source.values) && Array.isArray(source.notes));
     let progress: ReturnType<typeof normalizeProgress>;
@@ -112,10 +137,10 @@ export function parseDailyState(raw: unknown): DailyState {
     ensure(progress.values.length === 36 && puzzle.givens.every((given, index) => given === 0 || progress.values[index] === given));
     if (source.finished_at !== null) {
       const finished = Date.parse(source.finished_at as string);
-      ensure(finished >= started && finished <= server && Math.abs(finished - started - (source.elapsed_ms as number)) <= 1);
+      ensure(pausedAt === null && finished >= started && finished <= server && Math.abs(finished - started - pausedMs - (source.elapsed_ms as number)) <= 1);
       ensure(progress.values.every(Boolean) && getConflicts({ ...puzzle, solution: [] }, progress.values).size === 0);
     }
-    attempt = { id: source.id, started_at: source.started_at, finished_at: source.finished_at as string | null, elapsed_ms: source.elapsed_ms as number | null, ranked: source.ranked, ...progress };
+    attempt = { id: source.id, started_at: source.started_at, finished_at: source.finished_at as string | null, elapsed_ms: source.elapsed_ms as number | null, ranked: source.ranked, paused_at: pausedAt, paused_ms: pausedMs, timing_version: timingVersion, ...progress };
   } else ensure(raw.puzzle === null);
   ensure(daily !== null || (puzzle === null && attempt === null));
   return { date, resets_at: raw.resets_at, server_now: raw.server_now, daily, puzzle, attempt, profile };

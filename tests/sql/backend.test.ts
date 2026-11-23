@@ -361,9 +361,9 @@ test('post-finish spectating is authorized by the server and never grants write 
       const afterReapply = await user(HOST, () => watch(code, GUEST));
       assert.deepEqual(afterReapply.values, latest.values);
       assert.deepEqual(afterReapply.notes, latest.notes);
-      const flags = (await db.query<{ schema_name: string; prosecdef: boolean; proconfig: string[] }>("select n.nspname as schema_name,p.prosecdef,p.proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.proname in ('numora_spectate_player','spectate_player') order by n.nspname")).rows;
-      assert.equal(flags.find(flag => flag.schema_name === 'public')?.prosecdef, false);
-      assert.equal(flags.find(flag => flag.schema_name === 'numora_private')?.prosecdef, true);
+      const flags = (await db.query<{ schema_name: string; prosecdef: boolean; proconfig: string[]; pronargs: number }>("select n.nspname as schema_name,p.prosecdef,p.proconfig,p.pronargs from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.proname in ('numora_spectate_player','spectate_player') order by n.nspname,p.pronargs")).rows;
+      assert.ok(flags.filter(flag => flag.schema_name === 'public').every(flag => !flag.prosecdef));
+      assert.equal(flags.find(flag => flag.schema_name === 'numora_private' && flag.pronargs === 4)?.prosecdef, true);
       assert.ok(flags.every(flag => flag.proconfig.includes('search_path=""')));
     });
   } finally { await db.close(); }

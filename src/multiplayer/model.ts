@@ -7,6 +7,8 @@ export interface RoomPlayer {
   user_id: string;
   nickname: string;
   ready: boolean;
+  active: boolean;
+  resume_ready: boolean;
   progress_count: number;
   finished_at: string | null;
   elapsed_ms: number | null;
@@ -16,18 +18,57 @@ export interface RoomPlayer {
 export interface RoomState {
   room: {
     id: string;
+    round_id: string;
     code: string;
     host_id: string;
     status: RoomStatus;
     size: 5 | 6 | 7 | 8;
     difficulty: Difficulty;
     starts_at: string | null;
+    paused_at: string | null;
+    resumes_at: string | null;
+    paused_ms: number;
+    pause_id: string | null;
+    pause_version: number;
     created_at: string;
   };
   players: RoomPlayer[];
   self: { values: number[]; notes: number[][] } | null;
   puzzle: PublicPuzzle | null;
   server_now: string;
+}
+
+/** Once a new round is accepted, delayed responses can never reopen its predecessor. */
+export function createRoomSnapshotGate() {
+  let lastTime = -Infinity;
+  let round = '';
+  let pauseVersion = 0;
+  const retired = new Set<string>();
+  return (next: RoomState): boolean => {
+    const timestamp = Date.parse(next.server_now);
+    if (!Number.isFinite(timestamp) || timestamp < lastTime || retired.has(next.room.round_id) ||
+      (round === next.room.round_id && next.room.pause_version < pauseVersion)) return false;
+    if (round && round !== next.room.round_id) retired.add(round);
+    round = next.room.round_id;
+    pauseVersion = next.room.pause_version;
+    lastTime = timestamp;
+    return true;
+  };
+}
+
+/** Count only active solving time, including when the resume deadline passes between polls. */
+export function getRoomTiming(room: RoomState['room'], now: number) {
+  const start = room.starts_at ? Date.parse(room.starts_at) : Infinity;
+  const pause = room.paused_at ? Date.parse(room.paused_at) : null;
+  const resume = room.resumes_at ? Date.parse(room.resumes_at) : null;
+  const paused = pause !== null && (resume === null || now < resume);
+  const pendingPause = pause !== null && resume !== null && now >= resume ? resume - pause : 0;
+  return {
+    paused,
+    resuming: paused && resume !== null,
+    resumeSeconds: paused && resume !== null ? Math.max(1, Math.ceil((resume - now) / 1000)) : 0,
+    elapsed: room.status === 'lobby' ? 0 : Math.max(0, (paused ? pause! : now) - start - room.paused_ms - pendingPause),
+  };
 }
 
 /** Private target progress returned only by the server-authorized spectator RPC. */
@@ -123,12 +164,24 @@ export function parseRoomState(raw: unknown): RoomState {
   ensure(record(raw) && record(raw.room) && Array.isArray(raw.players) && date(raw.server_now));
   const source = raw.room;
   ensure(isUuid(source.id) && isUuid(source.host_id) && typeof source.code === 'string');
+  ensure(source.round_id === undefined || isUuid(source.round_id));
   let code: string;
   try { code = normalizeRoomCode(source.code); } catch { throw new RoomDataError(); }
   ensure(source.code === code && sizes.includes(source.size as number) && levels.includes(source.difficulty as Difficulty));
   ensure(source.status === 'lobby' || source.status === 'racing' || source.status === 'finished');
   ensure(date(source.created_at) && (source.starts_at === null || date(source.starts_at)));
   ensure(source.status === 'lobby' ? source.starts_at === null : date(source.starts_at));
+  const pausedAt = source.paused_at ?? null, resumesAt = source.resumes_at ?? null;
+  const pausedMs = source.paused_ms === undefined ? 0 : source.paused_ms, pauseId = source.pause_id ?? null;
+  const pauseVersion = source.pause_version === undefined ? 0 : source.pause_version;
+  ensure((pausedAt === null || date(pausedAt)) && (resumesAt === null || date(resumesAt)));
+  ensure(whole(pausedMs, 0, Number.MAX_SAFE_INTEGER) && whole(pauseVersion, 0, Number.MAX_SAFE_INTEGER));
+  ensure(pauseId === null || isUuid(pauseId));
+  if (pausedAt !== null) {
+    ensure(source.status === 'racing' && pauseId !== null && pauseVersion > 0 && date(source.starts_at));
+    ensure(Date.parse(pausedAt) >= Date.parse(source.starts_at) && Date.parse(pausedAt) <= Date.parse(raw.server_now));
+    ensure(resumesAt === null || Date.parse(resumesAt) >= Date.parse(pausedAt));
+  } else ensure(resumesAt === null);
   const size = source.size as RoomState['room']['size'];
   const count = size * size;
   const players: RoomPlayer[] = [];
@@ -140,10 +193,13 @@ export function parseRoomState(raw: unknown): RoomState {
     try { nickname = normalizeNickname(candidate.nickname); } catch { throw new RoomDataError(); }
     ensure(nickname === candidate.nickname && !players.some(player => player.user_id === candidate.user_id));
     ensure(typeof candidate.ready === 'boolean' && whole(candidate.progress_count, 0, count) && date(candidate.joined_at));
+    ensure(candidate.active === undefined || typeof candidate.active === 'boolean');
+    ensure(candidate.resume_ready === undefined || typeof candidate.resume_ready === 'boolean');
     ensure((candidate.finished_at === null && candidate.elapsed_ms === null) ||
       (date(candidate.finished_at) && whole(candidate.elapsed_ms, 0, Number.MAX_SAFE_INTEGER)));
     players.push({
-      user_id: candidate.user_id, nickname, ready: candidate.ready,
+      user_id: candidate.user_id, nickname, ready: candidate.ready, active: candidate.active ?? true,
+      resume_ready: candidate.resume_ready ?? false,
       progress_count: candidate.progress_count, finished_at: candidate.finished_at as string | null,
       elapsed_ms: candidate.elapsed_ms as number | null, joined_at: candidate.joined_at,
     });
@@ -179,8 +235,9 @@ export function parseRoomState(raw: unknown): RoomState {
   }
   return {
     room: {
-      id: source.id, code, host_id: source.host_id, status: source.status, size,
+      id: source.id, round_id: (source.round_id ?? source.id) as string, code, host_id: source.host_id, status: source.status, size,
       difficulty: source.difficulty as Difficulty, starts_at: source.starts_at as string | null,
+      paused_at: pausedAt, resumes_at: resumesAt, paused_ms: pausedMs, pause_id: pauseId, pause_version: pauseVersion,
       created_at: source.created_at,
     },
     players, puzzle, self, server_now: raw.server_now,

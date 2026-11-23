@@ -32,6 +32,11 @@ export function explainError(error: unknown): string {
   if (/failed to fetch|fetch failed|network|load failed|timed? out|timeout|functionsfetcherror/.test(text)) return 'Couldn’t reach the room. Check your connection and try again.';
   if (status === 429 || /rate.limit|too many|room creation limit/.test(text)) return 'Too many attempts. Please wait a moment and try again.';
   if (status === 401 || /jwt|refresh token|session.*(expired|missing)|not authenticated|sign in/.test(text)) return 'Your connection expired. Refresh the page and reconnect.';
+  if (/pause.*(?:changed|version)|timing.*changed|stale.*pause/.test(text)) return 'The pause state has changed. Reconnect to continue.';
+  if (/paused|resume countdown/.test(text)) return 'The room is paused. Everyone must be ready before play resumes.';
+  if (/round.*(?:changed|stale)|stale.*round|moved.*round/.test(text)) return 'This room has moved to a new round. Reconnect to continue.';
+  if (/only.*host.*(?:next|new|rematch|round|game)/.test(text)) return 'Only the room host can create the next game.';
+  if (/everyone.*finish|finish.*everyone|round.*(?:not finished|still running)/.test(text)) return 'Wait for everyone to finish before creating the next game.';
   if (/spectat.*(?:finish|complet)|(?:finish|complet).*spectat|finish your (?:puzzle|race) before watch/.test(text)) return 'Finish your race before watching another player.';
   if (/spectat.*(?:yourself|own)|(?:yourself|own).*spectat|choose another player.*watch/.test(text)) return 'Choose another player to watch.';
   if (/spectat.*(?:unavailable|not found)|target.*(?:not.*member|not found|same room)|player is not in this room/.test(text)) return 'That player is not available to watch in this room.';
@@ -104,6 +109,38 @@ export function createCompetitionApi(client: SupabaseClient | null) {
 
   const getRoom = (code: string) => rpc('numora_get_room', { p_code: normalizeRoomCode(code) });
 
+  function roundArguments(roundId?: string): Record<string, string> {
+    if (roundId === undefined) return {};
+    if (!isUuid(roundId)) throw new CompetitionInputError('Reconnect to this room to load the current round.');
+    return { p_round_id: roundId.toLowerCase() };
+  }
+
+  function pauseArguments(version?: number): Record<string, number> {
+    if (version === undefined) return {};
+    if (!Number.isSafeInteger(version) || version < 0) throw new CompetitionInputError('Reconnect to load the current pause state.');
+    return { p_pause_version: version };
+  }
+
+  const pauseRoom = (code: string, roundId: string, version: number) => rpc('numora_pause_room', {
+    p_code: normalizeRoomCode(code), ...roundArguments(roundId), ...pauseArguments(version),
+  });
+  const setResumeReady = (code: string, roundId: string, pauseId: string, ready: boolean) => {
+    if (!isUuid(pauseId) || typeof ready !== 'boolean') throw new CompetitionInputError('Reconnect to load the current pause state.');
+    return rpc('numora_set_resume_ready', { p_code: normalizeRoomCode(code), ...roundArguments(roundId), p_pause_id: pauseId.toLowerCase(), p_ready: ready });
+  };
+
+  async function rematchRoom(code: string, roundId: string): Promise<RoomState> {
+    const roomCode = normalizeRoomCode(code);
+    const { p_round_id } = roundArguments(roundId);
+    if (!p_round_id) throw new CompetitionInputError('Reconnect to this room to load the current round.');
+    const service = requireClient();
+    await getUserId();
+    const { data, error } = await service.functions.invoke('numora-rematch-room', { body: { code: roomCode, round_id: p_round_id } });
+    if (error) throw await functionError(error);
+    if (!data || data.code !== roomCode) throw new RoomDataError();
+    return getRoom(roomCode);
+  }
+
   async function createRoom(options: { nickname: string; size: number; difficulty: Difficulty }): Promise<RoomState> {
     const nickname = normalizeNickname(options.nickname);
     if (![5, 6, 7, 8].includes(options.size) || !['Easy', 'Medium', 'Hard'].includes(options.difficulty)) {
@@ -118,28 +155,29 @@ export function createCompetitionApi(client: SupabaseClient | null) {
   }
 
   const joinRoom = (code: string, nickname: string) => rpc('numora_join_room', { p_code: normalizeRoomCode(code), p_nickname: normalizeNickname(nickname) });
-  const setReady = (code: string, ready: boolean) => rpc('numora_set_ready', { p_code: normalizeRoomCode(code), p_ready: ready });
-  const startRoom = (code: string) => rpc('numora_start_room', { p_code: normalizeRoomCode(code) });
-  const saveProgress = (code: string, values: number[], notes: number[][]) => {
+  const setReady = (code: string, ready: boolean, roundId?: string) => rpc('numora_set_ready', { p_code: normalizeRoomCode(code), p_ready: ready, ...roundArguments(roundId) });
+  const startRoom = (code: string, roundId?: string) => rpc('numora_start_room', { p_code: normalizeRoomCode(code), ...roundArguments(roundId) });
+  const saveProgress = (code: string, values: number[], notes: number[][], roundId?: string, pauseVersion?: number) => {
     const board = normalizeProgress(values, notes);
-    return rpc('numora_save_progress', { p_code: normalizeRoomCode(code), p_values: board.values, p_notes: board.notes });
+    return rpc('numora_save_progress', { p_code: normalizeRoomCode(code), p_values: board.values, p_notes: board.notes, ...roundArguments(roundId), ...pauseArguments(pauseVersion) });
   };
-  const submitSolution = (code: string, values: number[], notes: number[][]) => {
+  const submitSolution = (code: string, values: number[], notes: number[][], roundId?: string, pauseVersion?: number) => {
     const board = normalizeProgress(values, notes);
-    return rpc('numora_submit_solution', { p_code: normalizeRoomCode(code), p_values: board.values, p_notes: board.notes });
+    return rpc('numora_submit_solution', { p_code: normalizeRoomCode(code), p_values: board.values, p_notes: board.notes, ...roundArguments(roundId), ...pauseArguments(pauseVersion) });
   };
-  async function getSpectatorState(code: string, playerId: string, puzzle: PublicPuzzle, signal?: AbortSignal): Promise<SpectatorState> {
+  async function getSpectatorState(code: string, playerId: string, puzzle: PublicPuzzle, signal?: AbortSignal, roundId?: string, pauseVersion?: number): Promise<SpectatorState> {
     const roomCode = normalizeRoomCode(code);
     const target = playerId.trim().toLowerCase();
     if (!isUuid(target)) throw new CompetitionInputError('Choose another player in this room to watch.');
     // The RPC verifies the viewer's finish and both memberships on every request.
-    const data = await requestRpc('numora_spectate_player', { p_code: roomCode, p_player_id: target }, signal);
+    const data = await requestRpc('numora_spectate_player', { p_code: roomCode, p_player_id: target, ...roundArguments(roundId), ...pauseArguments(pauseVersion) }, signal);
     return parseSpectatorState(data, target, puzzle);
   }
-  async function leaveRoom(code: string): Promise<void> {
+  async function leaveRoom(code: string, roundId?: string): Promise<void> {
+    const args = { p_code: normalizeRoomCode(code), ...roundArguments(roundId) };
     const service = requireClient();
     await getUserId();
-    const { error } = await service.rpc('numora_leave_room', { p_code: normalizeRoomCode(code) });
+    const { error } = await service.rpc('numora_leave_room', args);
     if (error) throw new CompetitionError(explainError(error));
   }
 
@@ -176,8 +214,8 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     };
   }
 
-  return { getUserId, createRoom, joinRoom, getRoom, setReady, startRoom, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom };
+  return { getUserId, createRoom, rematchRoom, joinRoom, getRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom };
 }
 
 const api = createCompetitionApi(supabase);
-export const { getUserId, createRoom, joinRoom, getRoom, setReady, startRoom, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom } = api;
+export const { getUserId, createRoom, rematchRoom, joinRoom, getRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom } = api;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Check, ChevronDown, Clock3, Copy, Eraser, Flag, LoaderCircle, Pencil, Redo2, RefreshCw, Sparkles, Trophy, Undo2, UserPlus, Users, X } from 'lucide-react';
+import { CalendarDays, Check, ChevronDown, Clock3, Copy, Eraser, Flag, LoaderCircle, Pause, Pencil, Play, Redo2, RefreshCw, Sparkles, Trophy, Undo2, UserPlus, Users, X } from 'lucide-react';
 import { APP_NAME } from '../branding';
 import BrandMark from './BrandMark';
 import AccountButton from './AccountButton';
@@ -8,7 +8,8 @@ import { useAccount } from '../account/AccountProvider';
 import type { Puzzle } from '../game/engine';
 import { getSegments, isSolved } from '../game/engine';
 import { createSession, restoreSession, serializeSession, sessionReducer, type Session, type SessionAction } from '../game/session';
-import { cancelFriendRequest, explainDailyError, getDailyLeaderboard, getDailyState, getFriends, removeFriend, requestFriend, respondFriend, saveDaily, startDaily, submitDaily, updateProfile, type DailyLeaderboard, type DailyState, type FriendsState, type LeaderboardEntry, type Profile } from '../daily/api';
+import { cancelFriendRequest, explainDailyError, getDailyLeaderboard, getDailyState, getFriends, removeFriend, requestFriend, respondFriend, saveDaily, setDailyPaused, startDaily, submitDaily, updateProfile, type DailyLeaderboard, type DailyState, type FriendsState, type LeaderboardEntry, type Profile } from '../daily/api';
+import { getDailyElapsed, isCurrentDailySnapshot } from '../daily/model';
 import './daily.css';
 
 type Scope = 'global' | 'friends';
@@ -53,7 +54,7 @@ export default function DailyPage({ onSolo, onCompete }: { onSolo: () => void; o
     if (!mounted.current) return;
     const previous = stateRef.current;
     const serverTime = Date.parse(next.server_now);
-    if (previous && (next.date < previous.date || (next.date === previous.date && serverTime < lastServerTime.current))) return;
+    if (!isCurrentDailySnapshot(previous, next, lastServerTime.current)) return;
     if (previous?.attempt?.finished_at !== next.attempt?.finished_at || previous?.date !== next.date) setLeaderboardRevision(value => value + 1);
     lastServerTime.current = serverTime;
     stateRef.current = next;
@@ -64,11 +65,11 @@ export default function DailyPage({ onSolo, onCompete }: { onSolo: () => void; o
   useEffect(() => {
     if (account.loading) return;
     const version = ++requestVersion.current;
-    let stopped = false, inFlight = false;
+    let stopped = false, inFlight = false, lastPoll = 0;
     let pending: AbortController | null = null;
     const refresh = async (initial = false) => {
       if (stopped || inFlight) return;
-      inFlight = true;
+      inFlight = true; lastPoll = Date.now();
       const controller = new AbortController(); pending = controller;
       if (initial) setLoading(true);
       try { const next = await getDailyState(controller.signal); if (!stopped && version === requestVersion.current) accept(next); }
@@ -77,7 +78,7 @@ export default function DailyPage({ onSolo, onCompete }: { onSolo: () => void; o
     };
     refreshRef.current = () => { void refresh(); };
     void refresh(true);
-    const poll = window.setInterval(() => { void refresh(); }, 15_000);
+    const poll = window.setInterval(() => { if ((stateRef.current?.attempt && !stateRef.current.attempt.finished_at) || Date.now() - lastPoll >= 15_000) void refresh(); }, 3000);
     return () => { stopped = true; pending?.abort(); window.clearInterval(poll); refreshRef.current = () => {}; };
   }, [account.loading, account.user?.id, account.isGoogle, accept]);
 
@@ -119,11 +120,11 @@ export default function DailyPage({ onSolo, onCompete }: { onSolo: () => void; o
         <section className="daily-play-panel" aria-label="Daily puzzle">
           {(loading || account.loading) && !state ? <div className="daily-waiting" role="status"><LoaderCircle className="spin" size={33} /><h2>Finding today’s little challenge.</h2><p>One fresh grid, shared with everyone.</p></div>
             : expired || rollover ? <div className="daily-waiting" role="status"><CalendarDays size={34} /><h2>A fresh day is arriving.</h2><p>Closing the previous grid and checking today’s challenge.</p><button className="secondary-button" onClick={() => refreshRef.current()}>Check for today’s puzzle</button></div>
-              : state?.attempt && state.puzzle ? <DailyGame key={`${state.date}:${state.attempt.id}`} state={state} serverNow={serverNow} expired={expired} isGoogle={account.isGoogle} onSnapshot={accept} onFriends={() => setScope('friends')} onSignIn={() => { void signIn(); }} />
+              : state?.attempt && state.puzzle ? <DailyGame key={`${state.date}:${state.attempt.id}`} state={state} serverNow={serverNow} expired={expired} isGoogle={account.isGoogle} onSnapshot={accept} onRefresh={() => refreshRef.current()} onFriends={() => setScope('friends')} onSignIn={() => { void signIn(); }} />
                 : state?.attempt ? <div className="daily-waiting" role="status"><LoaderCircle className="spin" size={33} /><h2>Opening your daily grid.</h2><p>Your clock is running. We’re reconnecting to your saved attempt.</p><button className="secondary-button" onClick={() => refreshRef.current()}>Reconnect</button></div>
-                  : <div className="daily-start"><span className="daily-large-icon"><CalendarDays size={34} /></span><div className="eyebrow">ONE GRID. ONE DAY.</div><h2>Today’s moment is waiting.</h2><p>A 6 × 6 Medium puzzle, made fresh for everyone. Your official clock starts when you begin.</p><div className="daily-start-rules"><span><Check size={16} /> Notes and undo are welcome</span><span><Clock3 size={16} /> Finish before midnight UTC</span><span><Flag size={16} /> One continuous clock</span></div>{account.isGoogle ? <><span className="daily-mode-pill ranked"><Trophy size={14} /> Ranked daily</span><button className="primary-button daily-begin" disabled={starting || account.busy || account.loading || !state?.daily || loading} onClick={() => { void begin(); }}>{starting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}{starting ? 'Opening your challenge…' : 'Start today’s challenge'}</button><p className="daily-start-note">Your verified finish will appear on today’s rankings.</p></> : <><button className="primary-button daily-begin" disabled={starting || account.busy || account.loading} onClick={() => { void signIn(); }}>Sign in with Google for ranked play</button><button className="secondary-button daily-practice" disabled={starting || account.busy || account.loading || !state?.daily || loading} onClick={() => { void begin(); }}>{starting ? <LoaderCircle className="spin" size={16} /> : <CalendarDays size={16} />}{starting ? 'Opening your challenge…' : 'Start a practice attempt'}</button><p className="daily-start-note">Practice is unranked. Sign in before starting to enter the leaderboard; signing in later keeps today’s attempt as practice.</p></>}</div>}
+                  : <div className="daily-start"><span className="daily-large-icon"><CalendarDays size={34} /></span><div className="eyebrow">ONE GRID. ONE DAY.</div><h2>Today’s moment is waiting.</h2><p>A 6 × 6 Medium puzzle, made fresh for everyone. Your official clock starts when you begin.</p><div className="daily-start-rules"><span><Check size={16} /> Notes and undo are welcome</span><span><Clock3 size={16} /> Finish before midnight UTC</span><span><Pause size={16} /> Pause when you need a break</span></div>{account.isGoogle ? <><span className="daily-mode-pill ranked"><Trophy size={14} /> Ranked daily</span><button className="primary-button daily-begin" disabled={starting || account.busy || account.loading || !state?.daily || loading} onClick={() => { void begin(); }}>{starting ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}{starting ? 'Opening your challenge…' : 'Start today’s challenge'}</button><p className="daily-start-note">Your verified finish will appear on today’s rankings.</p></> : <><button className="primary-button daily-begin" disabled={starting || account.busy || account.loading} onClick={() => { void signIn(); }}>Sign in with Google for ranked play</button><button className="secondary-button daily-practice" disabled={starting || account.busy || account.loading || !state?.daily || loading} onClick={() => { void begin(); }}>{starting ? <LoaderCircle className="spin" size={16} /> : <CalendarDays size={16} />}{starting ? 'Opening your challenge…' : 'Start a practice attempt'}</button><p className="daily-start-note">Practice is unranked. Sign in before starting to enter the leaderboard; signing in later keeps today’s attempt as practice.</p></>}</div>}
         </section>
-        <aside className="daily-sidebar"><DailyStreaks key={`${state?.date ?? 'loading'}:${account.user?.id ?? 'guest'}`} date={state?.date ?? null} completion={state?.attempt?.finished_at ?? null} isGoogle={account.isGoogle} onSignIn={() => { void signIn(); }} /><DailyRankings date={state?.date ?? null} scope={scope} onScope={setScope} isGoogle={account.isGoogle} ownId={account.user?.id ?? null} revision={leaderboardRevision} onSignIn={() => { void signIn(); }} /><section className="daily-friends-section"><button className="daily-friends-toggle" aria-expanded={friendsOpen} onClick={() => setFriendsOpen(value => !value)}><span><Users size={18} /> Friends & profile</span><ChevronDown size={17} className={friendsOpen ? 'is-open' : ''} /></button>{friendsOpen && (account.isGoogle ? <FriendsPanel initialProfile={state?.profile ?? null} onProfile={profileChanged} onFriendsChanged={() => setLeaderboardRevision(value => value + 1)} /> : <div className="daily-friends-signin"><p>Connect with friends and compare your daily finishes.</p><button className="secondary-button" onClick={() => { void signIn(); }}>Sign in with Google</button></div>)}</section><div className="daily-fair-play"><Flag size={17} /><p>A shared grid. Your own deductions.<span>Ranked daily attempts have no hints, mistake checking, or pauses. Times are verified by the server.</span></p></div></aside>
+        <aside className="daily-sidebar"><DailyStreaks key={`${state?.date ?? 'loading'}:${account.user?.id ?? 'guest'}`} date={state?.date ?? null} completion={state?.attempt?.finished_at ?? null} isGoogle={account.isGoogle} onSignIn={() => { void signIn(); }} /><DailyRankings date={state?.date ?? null} scope={scope} onScope={setScope} isGoogle={account.isGoogle} ownId={account.user?.id ?? null} revision={leaderboardRevision} onSignIn={() => { void signIn(); }} /><section className="daily-friends-section"><button className="daily-friends-toggle" aria-expanded={friendsOpen} onClick={() => setFriendsOpen(value => !value)}><span><Users size={18} /> Friends & profile</span><ChevronDown size={17} className={friendsOpen ? 'is-open' : ''} /></button>{friendsOpen && (account.isGoogle ? <FriendsPanel initialProfile={state?.profile ?? null} onProfile={profileChanged} onFriendsChanged={() => setLeaderboardRevision(value => value + 1)} /> : <div className="daily-friends-signin"><p>Connect with friends and compare your daily finishes.</p><button className="secondary-button" onClick={() => { void signIn(); }}>Sign in with Google</button></div>)}</section><div className="daily-fair-play"><Flag size={17} /><p>A shared grid. Your own deductions.<span>Ranked daily attempts have no hints or mistake checking. Pauses stop the clock and hide the grid. Times are verified by the server.</span></p></div></aside>
       </div>
     </main><footer className="site-footer daily-footer"><span>A little clarity, every day.</span><span>New daily puzzle at 00:00 UTC.</span></footer>
   </div>;
@@ -135,10 +136,11 @@ interface DailyGameProps {
   expired: boolean;
   isGoogle: boolean;
   onSnapshot: (next: DailyState) => void;
+  onRefresh: () => void;
   onFriends: () => void;
   onSignIn: () => void;
 }
-function DailyGame({ state, serverNow, expired, isGoogle, onSnapshot, onFriends, onSignIn }: DailyGameProps) {
+function DailyGame({ state, serverNow, expired, isGoogle, onSnapshot, onRefresh, onFriends, onSignIn }: DailyGameProps) {
   const attempt = state.attempt!;
   const puzzle = useMemo<Puzzle>(() => ({ ...state.puzzle!, solution: [] }), [state.puzzle!.id]);
   const draftKey = `numora:daily:draft:${state.date}:${attempt.id}`;
@@ -154,6 +156,7 @@ function DailyGame({ state, serverNow, expired, isGoogle, onSnapshot, onFriends,
   const [notesMode, setNotesMode] = useState(false);
   const [shiftHeld, setShiftHeld] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [pauseBusy, setPauseBusy] = useState(false);
   const [error, setError] = useState('');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'pending' | 'retrying'>(boot.dirty ? 'pending' : 'saved');
   const [draftAvailable, setDraftAvailable] = useState(true);
@@ -161,16 +164,18 @@ function DailyGame({ state, serverNow, expired, isGoogle, onSnapshot, onFriends,
   const mounted = useRef(true);
   const dirty = useRef(boot.dirty);
   const revision = useRef(0);
-  const inFlight = useRef(false);
+  const inFlight = useRef<Promise<void> | null>(null);
+  const pauseRequest = useRef(false);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submittedSignature = useRef('');
   const boardRef = useRef<HTMLDivElement>(null);
   const latest = useRef({ state, expired, onSnapshot }); latest.current = { state, expired, onSnapshot };
-  const canPlay = !expired && !attempt.finished_at && !submitting;
+  const paused = attempt.paused_at !== null;
+  const canPlay = !expired && !attempt.finished_at && !submitting && !paused && !pauseBusy;
   const effectiveNotes = notesMode || shiftHeld;
   const segments = useMemo(() => getSegments(puzzle), [puzzle]);
   const peers = useMemo(() => new Set([...(segments.rows.find(run => run.includes(selected)) ?? []), ...(segments.columns.find(run => run.includes(selected)) ?? [])]), [segments, selected]);
-  const elapsed = attempt.elapsed_ms ?? Math.max(0, serverNow - Date.parse(attempt.started_at));
+  const elapsed = getDailyElapsed(attempt, serverNow);
   const persist = useCallback((session: Session, isDirty: boolean) => {
     if (isDirty) setDraftAvailable(cache(draftKey, JSON.stringify({ session: serializeSession(session), dirty: true })));
     else forget(draftKey);
@@ -183,24 +188,55 @@ function DailyGame({ state, serverNow, expired, isGoogle, onSnapshot, onFriends,
     gameRef.current = complete; setGame(complete); dirty.current = false; persist(complete, false); setSaveStatus('saved');
   }, [attempt.finished_at, puzzle, persist]);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback((beforePause = false): Promise<void> => {
+    if (inFlight.current) return inFlight.current;
     const current = latest.current;
-    if (!mounted.current || inFlight.current || !dirty.current || current.expired || current.state.attempt?.finished_at) return;
-    inFlight.current = true;
+    if (!mounted.current || !dirty.current || current.expired || current.state.attempt?.finished_at || current.state.attempt?.paused_at || (pauseRequest.current && !beforePause)) return Promise.resolve();
     const sentRevision = revision.current, session = gameRef.current;
-    let failed = false;
-    try {
-      const next = await saveDaily(state.date, session.values, session.notes);
-      if (!mounted.current || latest.current.expired || next.date !== state.date) return;
-      current.onSnapshot(next);
-      if (revision.current === sentRevision) { dirty.current = false; setSaveStatus('saved'); persist(gameRef.current, false); }
-    } catch { failed = true; if (mounted.current && !latest.current.expired) setSaveStatus('retrying'); }
-    finally { inFlight.current = false; if (mounted.current && dirty.current && !latest.current.expired) retryTimer.current = setTimeout(() => { void flush(); }, failed ? 2000 : 200); }
+    const sentVersion = current.state.attempt!.timing_version;
+    const pending = (async () => {
+      let failed = false;
+      try {
+        const next = await saveDaily(state.date, session.values, session.notes, sentVersion);
+        if (!mounted.current || latest.current.expired || next.date !== state.date) return;
+        current.onSnapshot(next);
+        if (revision.current === sentRevision) { dirty.current = false; setSaveStatus('saved'); persist(gameRef.current, false); }
+      } catch { failed = true; if (mounted.current && !latest.current.expired) setSaveStatus('retrying'); }
+      finally {
+        inFlight.current = null;
+        if (mounted.current && dirty.current && !latest.current.expired && !latest.current.state.attempt?.paused_at && !pauseRequest.current) retryTimer.current = setTimeout(() => { void flush(); }, failed ? 2000 : 200);
+      }
+    })();
+    inFlight.current = pending;
+    return pending;
   }, [state.date, persist]);
-  useEffect(() => { if (!dirty.current || expired) return; const timer = setTimeout(() => { void flush(); }, 600); return () => clearTimeout(timer); }, [game.values, game.notes, expired, flush]);
+  useEffect(() => {
+    if (!dirty.current || expired || paused || pauseBusy) return;
+    const timer = setTimeout(() => { void flush(); }, 600);
+    return () => clearTimeout(timer);
+  }, [game.values, game.notes, expired, paused, pauseBusy, attempt.timing_version, flush]);
+
+  const togglePause = async () => {
+    if (pauseRequest.current || submitting || expired || attempt.finished_at) return;
+    const desired = !paused, version = attempt.timing_version;
+    pauseRequest.current = true; setPauseBusy(true); setShiftHeld(false); setError('');
+    try {
+      // Finish a pending save before changing the timer; local drafts survive failures.
+      if (desired) await flush(true);
+      if (!mounted.current || latest.current.expired || latest.current.state.attempt?.finished_at) return;
+      const next = await setDailyPaused(state.date, attempt.id, desired, version);
+      if (!mounted.current || latest.current.expired || next.date !== state.date) return;
+      onSnapshot(next);
+    } catch (cause) {
+      if (mounted.current && !latest.current.expired) { setError(explainDailyError(cause)); onRefresh(); }
+    } finally {
+      pauseRequest.current = false;
+      if (mounted.current) setPauseBusy(false);
+    }
+  };
 
   const edit = useCallback((action: SessionAction) => {
-    if (!canPlay) return;
+    if (!canPlay || pauseRequest.current) return;
     const next = sessionReducer(gameRef.current, action);
     if (next === gameRef.current) return;
     revision.current++; dirty.current = true; gameRef.current = next;
@@ -235,26 +271,28 @@ function DailyGame({ state, serverNow, expired, isGoogle, onSnapshot, onFriends,
     return () => { window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('blur', release); document.removeEventListener('visibilitychange', visibility); };
   }, [canPlay, puzzle, selected, notesMode, enter, edit]);
   const submit = useCallback(async () => {
-    if (!canPlay || submitting) return;
+    if (!canPlay || submitting || pauseRequest.current) return;
     const session = gameRef.current;
     submittedSignature.current = JSON.stringify(session.values); setSubmitting(true); setError('');
-    try { const next = await submitDaily(state.date, session.values, session.notes); if (!mounted.current || latest.current.expired || next.date !== state.date) return; dirty.current = false; setSaveStatus('saved'); onSnapshot(next); }
+    try { const next = await submitDaily(state.date, session.values, session.notes, attempt.timing_version); if (!mounted.current || latest.current.expired || next.date !== state.date) return; dirty.current = false; setSaveStatus('saved'); onSnapshot(next); }
     catch (cause) { if (mounted.current && !latest.current.expired) setError(explainDailyError(cause)); }
     finally { if (mounted.current) setSubmitting(false); }
-  }, [canPlay, submitting, state.date, onSnapshot]);
+  }, [canPlay, submitting, state.date, attempt.timing_version, onSnapshot]);
+  // A rejected pre-pause finish may be retried automatically after resuming.
+  useEffect(() => { submittedSignature.current = ''; }, [attempt.timing_version]);
   useEffect(() => { if (!canPlay || !isSolved(puzzle, game.values) || submittedSignature.current === JSON.stringify(game.values)) return; void submit(); }, [game.values, puzzle, canPlay, submit]);
 
   return <div className="daily-game">
-    <div className="daily-game-heading"><div><div className="eyebrow">{dayLabel(state.date)} · DAILY 6 × 6</div><h2>Your daily moment.</h2></div><div className="daily-timer"><Clock3 size={17} /><span>{time(elapsed)}</span></div></div>
+    <div className="daily-game-heading"><div><div className="eyebrow">{dayLabel(state.date)} · DAILY 6 × 6</div><h2>Your daily moment.</h2></div><div className="daily-time-controls"><div className="daily-timer" aria-label={paused ? "Paused daily timer" : "Daily timer"}><Clock3 size={17} /><span>{time(elapsed)}</span></div>{!attempt.finished_at && !paused && <button className="secondary-button daily-pause-button" disabled={pauseBusy || submitting || expired} onClick={() => { void togglePause(); }}>{pauseBusy ? <LoaderCircle className="spin" size={15} /> : <Pause size={15} />}{pauseBusy ? 'Pausing…' : 'Pause'}</button>}{paused && <span className="daily-paused-label">Paused</span>}</div></div>
     <div className={`daily-attempt-mode ${attempt.ranked ? 'ranked' : ''}`}><span className="daily-mode-pill"><Trophy size={13} />{attempt.ranked ? 'Ranked attempt' : 'Practice attempt'}</span>{!attempt.ranked && <p>{isGoogle ? 'Today stays unranked. Your next daily can be ranked.' : <>Sign in before starting a future daily to join the rankings. <button onClick={onSignIn}>Sign in with Google</button></>}</p>}</div>
-    <div className={`puzzle-board daily-board ${attempt.finished_at ? 'is-solved' : ''}`} ref={boardRef} role="grid" aria-label="6 by 6 daily puzzle. Use arrows to move and numbers to enter." aria-rowcount={puzzle.size} aria-colcount={puzzle.size} style={{ '--size': puzzle.size } as React.CSSProperties}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
+    {paused ? <section className="daily-pause-panel" aria-label="Daily puzzle paused"><span className="daily-large-icon"><Pause size={31} /></span><h3>A little breathing room.</h3><p>Your clock is paused. Resume when you’re ready. Today’s puzzle still closes at midnight UTC.</p><button className="primary-button" disabled={pauseBusy || expired} onClick={() => { void togglePause(); }}>{pauseBusy ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}{pauseBusy ? 'Resuming…' : 'Resume daily puzzle'}</button></section> : <><div className={`puzzle-board daily-board ${attempt.finished_at ? 'is-solved' : ''}`} ref={boardRef} role="grid" aria-label="6 by 6 daily puzzle. Use arrows to move and numbers to enter." aria-rowcount={puzzle.size} aria-colcount={puzzle.size} style={{ '--size': puzzle.size } as React.CSSProperties}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
       const index = row * puzzle.size + column, value = game.values[index], given = Boolean(puzzle.givens[index]);
       const across = segments.rows.find(run => run.includes(index))!, down = segments.columns.find(run => run.includes(index))!;
       return <button key={index} role="gridcell" data-daily-cell={index} aria-selected={selected === index} aria-readonly={given || Boolean(attempt.finished_at)} aria-rowindex={row + 1} aria-colindex={column + 1} aria-label={`Row ${row + 1}, column ${column + 1}, ${value || 'empty'}${given ? ', fixed clue' : ''}${!value && game.notes[index].length ? `, notes ${game.notes[index].join(', ')}` : ''}. Across length ${across.length}, down length ${down.length}.`} tabIndex={selected === index ? 0 : -1} disabled={!canPlay} onClick={() => setSelected(index)} className={`cell ${given ? 'given' : ''} ${selected === index ? 'selected' : ''} ${peers.has(index) ? 'peer' : ''}`} style={{ borderRightWidth: column === puzzle.size - 1 ? 0 : puzzle.rightWalls[index] ? 3 : 1, borderBottomWidth: row === puzzle.size - 1 ? 0 : puzzle.bottomWalls[index] ? 3 : 1, borderRightColor: puzzle.rightWalls[index] ? 'var(--grid)' : 'var(--cell-line)', borderBottomColor: puzzle.bottomWalls[index] ? 'var(--grid)' : 'var(--cell-line)' }}>{value ? <span className="cell-value">{value}</span> : <span className="cell-notes" aria-hidden="true">{Array.from({ length: Math.max(6, puzzle.size) }, (_, n) => <span key={n}>{game.notes[index].includes(n + 1) ? n + 1 : ''}</span>)}</span>}</button>;
-    })}</div>)}</div><div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>{attempt.ranked ? 'Your own deductions. One continuous clock.' : 'Practice · no ranking'}</span></div>
+    })}</div>)}</div><div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>{attempt.ranked ? 'Your own deductions. Pauses stop the clock.' : 'Practice · no ranking'}</span></div>
     {attempt.finished_at ? <div className="daily-finish"><Trophy size={28} /><div><h3>A lovely moment of clarity.</h3><p>{attempt.ranked ? 'Official finish' : 'Practice finish'} <strong>{time(attempt.elapsed_ms ?? 0, true)}</strong></p><span>{attempt.ranked ? 'Your verified time is on today’s leaderboard.' : 'This practice time does not enter the rankings.'}</span>{attempt.ranked && <button className="text-button" onClick={onFriends}><Users size={14} /> See friends’ standings</button>}</div></div>
-      : <><div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Daily number pad">{Array.from({ length: puzzle.size }, (_, n) => n + 1).map(value => <button key={value} className={effectiveNotes ? 'note-key' : ''} disabled={!canPlay || Boolean(puzzle.givens[selected])} aria-label={`${effectiveNotes ? 'Toggle note' : 'Enter'} ${value}`} onClick={event => enter(value, notesMode || event.shiftKey)}>{value}</button>)}</div><div className="game-tools daily-tools"><button disabled={!canPlay || !game.history.length} onClick={() => edit({ type: 'undo' })}><Undo2 size={19} /><span>Undo</span></button><button disabled={!canPlay || !game.future.length} onClick={() => edit({ type: 'redo' })}><Redo2 size={19} /><span>Redo</span></button><button disabled={!canPlay || Boolean(puzzle.givens[selected])} onClick={() => edit({ type: 'clear-cell', index: selected, puzzle })}><Eraser size={19} /><span>Erase</span></button><button disabled={!canPlay} aria-pressed={effectiveNotes} className={effectiveNotes ? 'tool-active' : ''} title="Pencil notes (N, or hold Shift)" onClick={() => setNotesMode(mode => !mode)}><Pencil size={19} /><span>Notes <small>{effectiveNotes ? 'ON' : 'OFF'}</small></span></button></div><button className="primary-button daily-submit" disabled={!canPlay || !game.values.every(Boolean)} onClick={() => { void submit(); }}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Flag size={16} />}{submitting ? 'Verifying your finish…' : 'Submit today’s solution'}</button><div className="daily-save-status" role="status"><span>{saveStatus === 'saved' ? 'Progress synced with your daily attempt.' : saveStatus === 'pending' ? 'Saving your progress…' : draftAvailable ? 'Saved on this device. Retrying sync…' : 'Device storage and sync are unavailable. Keep this tab open.'}</span>{saveStatus === 'retrying' && <button disabled={inFlight.current} onClick={() => { void flush(); }}>Retry sync</button>}</div></>}
-    {error && <p className="daily-error" role="alert">{error}</p>}
+      : <><div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Daily number pad">{Array.from({ length: puzzle.size }, (_, n) => n + 1).map(value => <button key={value} className={effectiveNotes ? 'note-key' : ''} disabled={!canPlay || Boolean(puzzle.givens[selected])} aria-label={`${effectiveNotes ? 'Toggle note' : 'Enter'} ${value}`} onClick={event => enter(value, notesMode || event.shiftKey)}>{value}</button>)}</div><div className="game-tools daily-tools"><button disabled={!canPlay || !game.history.length} onClick={() => edit({ type: 'undo' })}><Undo2 size={19} /><span>Undo</span></button><button disabled={!canPlay || !game.future.length} onClick={() => edit({ type: 'redo' })}><Redo2 size={19} /><span>Redo</span></button><button disabled={!canPlay || Boolean(puzzle.givens[selected])} onClick={() => edit({ type: 'clear-cell', index: selected, puzzle })}><Eraser size={19} /><span>Erase</span></button><button disabled={!canPlay} aria-pressed={effectiveNotes} className={effectiveNotes ? 'tool-active' : ''} title="Pencil notes (N, or hold Shift)" onClick={() => setNotesMode(mode => !mode)}><Pencil size={19} /><span>Notes <small>{effectiveNotes ? 'ON' : 'OFF'}</small></span></button></div><button className="primary-button daily-submit" disabled={!canPlay || !game.values.every(Boolean)} onClick={() => { void submit(); }}>{submitting ? <LoaderCircle className="spin" size={16} /> : <Flag size={16} />}{submitting ? 'Verifying your finish…' : 'Submit today’s solution'}</button><div className="daily-save-status" role="status"><span>{saveStatus === 'saved' ? 'Progress synced with your daily attempt.' : saveStatus === 'pending' ? 'Saving your progress…' : draftAvailable ? 'Saved on this device. Retrying sync…' : 'Device storage and sync are unavailable. Keep this tab open.'}</span>{saveStatus === 'retrying' && <button disabled={Boolean(inFlight.current)} onClick={() => { void flush(); }}>Retry sync</button>}</div></>}
+    </>}{error && <p className="daily-error" role="alert">{error}</p>}
   </div>;
 }
 

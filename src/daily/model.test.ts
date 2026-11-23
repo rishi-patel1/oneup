@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DailyDataError, normalizeDailyDate, normalizeDisplayName, normalizeFriendCode, parseDailyLeaderboard, parseDailyState, parseDailyStreaks, parseFriendsState, parseProfile } from './model';
+import { DailyDataError, getDailyElapsed, isCurrentDailySnapshot, normalizeDailyDate, normalizeDisplayName, normalizeFriendCode, parseDailyLeaderboard, parseDailyState, parseDailyStreaks, parseFriendsState, parseProfile } from './model';
 
 const user = '11111111-1111-4111-8111-111111111111', other = '22222222-2222-4222-8222-222222222222';
 const dailyId = '33333333-3333-4333-8333-333333333333', attemptId = '44444444-4444-4444-8444-444444444444';
@@ -100,4 +100,55 @@ test('friends separate request IDs from user IDs and never expose account data',
   assert.equal(parsed.incoming[0].id, attemptId); assert.equal(parsed.incoming[0].user_id, other);
   assert.equal(parseFriendsState(friends()).friends[0].user_id, other);
   for (const patch of [{ outgoing: [incoming] }, { profile: { ...profile, email: 'private' } }, { friends: [{ ...friends().friends[0], values: [] }] }]) assert.throws(() => parseFriendsState({ profile, friends: [], incoming: [incoming], outgoing: [], ...patch }), DailyDataError);
+});
+
+test('paused daily clocks freeze and resume using accumulated server pause time', () => {
+  const raw = daily();
+  Object.assign(raw.attempt!, {paused_at:`${date}T12:00:02Z`,paused_ms:1000,timing_version:3});
+  const paused = parseDailyState(raw);
+  assert.equal(getDailyElapsed(paused.attempt!, Date.parse(`${date}T12:00:05Z`)), 1000);
+  assert.equal(getDailyElapsed(paused.attempt!, Date.parse(`${date}T12:05:00Z`)), 1000);
+  Object.assign(raw.attempt!, {paused_at:null,paused_ms:4000,timing_version:4});
+  const resumed = parseDailyState(raw);
+  assert.equal(getDailyElapsed(resumed.attempt!, Date.parse(now)), 1000);
+  assert.equal(getDailyElapsed(resumed.attempt!, Date.parse(`${date}T12:00:06Z`)), 2000);
+  const legacy = parseDailyState(daily());
+  assert.equal(legacy.attempt?.paused_at, null);
+  assert.equal(legacy.attempt?.paused_ms, 0);
+  assert.equal(legacy.attempt?.timing_version, 0);
+});
+
+test('daily timing rejects malformed pauses and validates ranked active finish time', () => {
+  for (const patch of [
+    {paused_at:`${date}T12:00:06Z`,paused_ms:0,timing_version:1},
+    {paused_at:`${date}T11:59:59Z`,paused_ms:0,timing_version:1},
+    {paused_at:`${date}T12:00:02Z`,paused_ms:3000,timing_version:1},
+    {paused_at:null,paused_ms:-1,timing_version:1},
+    {paused_at:null,paused_ms:0,timing_version:1.5},
+    {paused_at:`${date}T12:00:02Z`,paused_ms:0,timing_version:0},
+    {paused_ms:0},
+  ]) { const bad = daily(); Object.assign(bad.attempt!, patch); assert.throws(() => parseDailyState(bad), DailyDataError); }
+  const finished = daily();
+  finished.attempt!.values = Array.from({length:36},(_,i)=>(Math.floor(i/6)+i%6)%6+1);
+  Object.assign(finished.attempt!, {paused_at:null,paused_ms:3000,timing_version:2,finished_at:now,elapsed_ms:2000});
+  assert.equal(parseDailyState(finished).attempt?.elapsed_ms, 2000);
+  Object.assign(finished.attempt!, {elapsed_ms:5000});
+  assert.throws(() => parseDailyState(finished), DailyDataError);
+});
+
+test('same-millisecond late polls cannot undo a daily pause, resume, or confirmed finish', () => {
+  const before = parseDailyState(daily());
+  const paused = structuredClone(before);
+  paused.attempt!.paused_at = `${date}T12:00:05Z`;
+  paused.attempt!.timing_version = 1;
+  paused.server_now = `${date}T12:00:05.000900Z`;
+  before.server_now = `${date}T12:00:05.000100Z`;
+  assert.equal(Date.parse(paused.server_now), Date.parse(before.server_now));
+  assert.equal(isCurrentDailySnapshot(before,paused,Date.parse(before.server_now)),true);
+  assert.equal(isCurrentDailySnapshot(paused,before,Date.parse(paused.server_now)),false);
+  const resumed = structuredClone(paused);
+  resumed.attempt!.paused_at = null; resumed.attempt!.timing_version = 2;
+  assert.equal(isCurrentDailySnapshot(resumed,paused,Date.parse(resumed.server_now)),false);
+  const finished = structuredClone(resumed); finished.attempt!.finished_at = now;
+  assert.equal(isCurrentDailySnapshot(finished,resumed,Date.parse(finished.server_now)),false);
 });
