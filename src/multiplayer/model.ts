@@ -11,8 +11,14 @@ export interface RoomPlayer {
   resume_ready: boolean;
   progress_count: number;
   finished_at: string | null;
+  given_up_at: string | null;
   elapsed_ms: number | null;
   joined_at: string;
+}
+
+/** Solved and given-up players no longer take part in the current race. */
+export function isPlayerDone(player: Pick<RoomPlayer, 'finished_at' | 'given_up_at'>): boolean {
+  return player.finished_at !== null || player.given_up_at !== null;
 }
 
 export interface RoomState {
@@ -197,10 +203,13 @@ export function parseRoomState(raw: unknown): RoomState {
     ensure(candidate.resume_ready === undefined || typeof candidate.resume_ready === 'boolean');
     ensure((candidate.finished_at === null && candidate.elapsed_ms === null) ||
       (date(candidate.finished_at) && whole(candidate.elapsed_ms, 0, Number.MAX_SAFE_INTEGER)));
+    const givenUpAt = candidate.given_up_at === undefined ? null : candidate.given_up_at;
+    ensure(givenUpAt === null || (date(givenUpAt) && candidate.finished_at === null && candidate.elapsed_ms === null));
     players.push({
       user_id: candidate.user_id, nickname, ready: candidate.ready, active: candidate.active ?? true,
       resume_ready: candidate.resume_ready ?? false,
       progress_count: candidate.progress_count, finished_at: candidate.finished_at as string | null,
+      given_up_at: givenUpAt,
       elapsed_ms: candidate.elapsed_ms as number | null, joined_at: candidate.joined_at,
     });
   }

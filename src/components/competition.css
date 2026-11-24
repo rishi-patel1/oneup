@@ -632,6 +632,46 @@
   text-align:center;
   margin-top:13px
 }
+.arena-give-up {
+  margin:0 24px 24px;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+  text-align:center
+}
+.arena-give-up-button {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  min-height:40px;
+  color:var(--muted);
+  font-size:13px
+}
+.arena-give-up h3 {
+  font-size:17px;
+  margin:0 0 8px
+}
+.arena-give-up p {
+  font-size:13px;
+  line-height:1.7;
+  color:var(--muted)
+}
+.arena-give-up section>div {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:center;
+  gap:10px;
+  margin-top:15px
+}
+.arena-give-up section button {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  min-height:42px;
+  padding:10px 16px;
+  font-size:13px
+}
 .arena-finish {
   display:flex;
   align-items:flex-start;

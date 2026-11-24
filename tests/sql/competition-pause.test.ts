@@ -77,17 +77,17 @@ test('competition pauses require unanimous resume, exclude paused time, and isol
    await assert.rejects(vote(OUTSIDER),/Join this room/);
    await assert.rejects(vote(HOST,true,OUTSIDER),/pause state has changed/);
   });
-  await t.test('all active members including finishers must resume; the final vote schedules exactly three seconds',async()=>{
+  await t.test('only active unfinished members must resume; terminal votes cannot cancel the countdown',async()=>{
    state=await vote(HOST);assert.equal(state.room.resumes_at,null);
-   state=await vote(GUEST);assert.equal(state.room.resumes_at,null);
+   state=await vote(GUEST);version=state.room.pause_version;
    assert.equal(state.players.find(p=>p.user_id===FINISHED)?.resume_ready,false);
-   state=await vote(FINISHED);version=state.room.pause_version;
    assert.ok(state.room.resumes_at);assert.ok(Math.abs(Date.parse(state.room.resumes_at!)-Date.parse(state.server_now)-3000)<100);
    const repeat=await vote(FINISHED);assert.equal(repeat.room.resumes_at,state.room.resumes_at);assert.equal(repeat.room.pause_version,version);
+   const ignored=await vote(FINISHED,false);assert.equal(ignored.room.resumes_at,state.room.resumes_at);assert.equal(ignored.room.pause_version,version);
    await assert.rejects(save(HOST),/room is paused/);await assert.rejects(finish(GUEST),/room is paused/);
-   const cancelled=await vote(FINISHED,false);assert.equal(cancelled.room.resumes_at,null);
+   const cancelled=await vote(GUEST,false);assert.equal(cancelled.room.resumes_at,null);
    assert.ok(cancelled.room.pause_version>version);
-   state=await vote(FINISHED);version=state.room.pause_version;
+   state=await vote(GUEST);version=state.room.pause_version;
    assert.ok(state.room.resumes_at);assert.ok(Date.parse(state.room.resumes_at!)>=Date.parse(repeat.room.resumes_at!));
   });
   await t.test('countdown completion adds paused duration once and legacy or pre-pause writes stay rejected',async()=>{
@@ -99,27 +99,32 @@ test('competition pauses require unanimous resume, exclude paused time, and isol
    await assert.rejects(user(HOST,()=>rpc('public.numora_submit_solution',[code,board.solution,JSON.stringify(notes),round],['','::int[]','::jsonb'])),/pause state has changed/);
    await assert.rejects(vote(HOST),/pause state has changed/);
   });
-  await t.test('later pause cycles reject old votes; explicit leave excludes a voter and rejoin cancels a pending resume',async()=>{
+  await t.test('solver leave/rejoin resets consent, but terminal membership changes never interrupt resume',async()=>{
    const oldId=pauseId;state=await pause();version=state.room.pause_version;pauseId=state.room.pause_id!;
    assert.notEqual(pauseId,oldId);await assert.rejects(vote(HOST,true,oldId),/pause state has changed/);
-   await vote(HOST);state=await vote(GUEST);assert.equal(state.room.resumes_at,null);
-   // Reading/syncing a disconnected member never silently removes their vote requirement.
-   assert.equal((await read()).players.find(p=>p.user_id===FINISHED)?.active,true);
-   await user(FINISHED,()=>rpc('public.numora_leave_room',[code,round]));state=await read();assert.ok(state.room.resumes_at);
-   assert.equal(state.players.find(p=>p.user_id===FINISHED)?.active,false);
-   await assert.rejects(vote(FINISHED),/Join this room/);
+   state=await vote(HOST);assert.equal(state.room.resumes_at,null);
+   // Reading/syncing a disconnected solver never silently removes their vote requirement.
+   assert.equal((await read()).players.find(p=>p.user_id===GUEST)?.active,true);
+   await user(GUEST,()=>rpc('public.numora_leave_room',[code,round]));state=await read();assert.ok(state.room.resumes_at);
+   assert.equal(state.players.find(p=>p.user_id===GUEST)?.active,false);
+   await assert.rejects(vote(GUEST),/Join this room/);
    const oldMembershipCycle=pauseId;
-   state=await user(FINISHED,()=>rpc('public.numora_join_room',[code,'Finisher']));assert.equal(state.room.resumes_at,null);
+   state=await user(GUEST,()=>rpc('public.numora_join_room',[code,'Guest']));assert.equal(state.room.resumes_at,null);
    assert.ok(state.players.every(p=>!p.resume_ready));assert.notEqual(state.room.pause_id,oldMembershipCycle);
    pauseId=state.room.pause_id!;
-   await assert.rejects(vote(FINISHED,true,oldMembershipCycle),/pause state has changed/);
-   for(const id of [HOST,GUEST,FINISHED])state=await vote(id);
+   await assert.rejects(vote(GUEST,true,oldMembershipCycle),/pause state has changed/);
+   for(const id of [HOST,GUEST])state=await vote(id);
+   const beforeTerminalLeave={...state.room};
+   await user(FINISHED,()=>rpc('public.numora_leave_room',[code,round]));
+   assert.deepEqual((await read()).room,beforeTerminalLeave);
+   state=await user(FINISHED,()=>rpc('public.numora_join_room',[code,'Finisher']));
+   assert.deepEqual(state.room,beforeTerminalLeave);
    version=state.room.pause_version;
    const originalPauseAt=state.room.paused_at;
    state=await pause(GUEST,version);version=state.room.pause_version;
    assert.equal(state.room.paused_at,originalPauseAt);assert.equal(state.room.resumes_at,null);assert.notEqual(state.room.pause_id,pauseId);
    pauseId=state.room.pause_id!;assert.ok(state.players.every(p=>!p.resume_ready));
-   for(const id of [HOST,GUEST,FINISHED])state=await vote(id);
+   for(const id of [HOST,GUEST])state=await vote(id);
    version=state.room.pause_version;await endResume();state=await read();
    assert.ok(state.room.paused_ms>=37800&&state.room.paused_ms<=38200);
   });

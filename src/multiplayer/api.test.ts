@@ -169,7 +169,9 @@ test('malformed spectator routing is rejected before any authentication or room 
 test('spectator authorization failures provide useful feedback and remain server-enforced', async () => {
   const mock = mockClient(); const api = createCompetitionApi(mock.service);
   mock.failWith({ code: '42501', message: 'Finish your puzzle before watching another player.' });
-  await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /Finish your race before watching/);
+  await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /Finish or give up your race before watching/);
+  mock.failWith({ code: '42501', message: 'Finish or give up your puzzle before watching another player.' });
+  await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /Finish or give up your race before watching/);
   mock.failWith({ code: '42501', message: 'Join this room before spectating.' });
   await assert.rejects(api.getSpectatorState('ABC123', targetId, spectatorPuzzle), /don’t have access/);
   mock.failWith({ code: '42501', message: 'That player is not in this room.' });
@@ -191,7 +193,7 @@ test('a rematch sends only the current room and round to the trusted generator',
   assert.equal(invalid.functionCalls.length, 0);
 });
 
-test('round-aware requests bind readiness, start, progress, finish, leave, and spectating to one round', async () => {
+test('round-aware requests bind readiness, start, progress, finish, give up, leave, and spectating to one round', async () => {
   const mock = mockClient(); const api = createCompetitionApi(mock.service);
   const round = '44444444-4444-4444-8444-444444444444';
   const values = [...spectatorPuzzle.givens], notes = Array.from({ length: 25 }, () => [] as number[]);
@@ -199,11 +201,12 @@ test('round-aware requests bind readiness, start, progress, finish, leave, and s
   await api.startRoom('ABC123', round);
   await api.saveProgress('ABC123', values, notes, round);
   await api.submitSolution('ABC123', values, notes, round);
+  await api.giveUpRoom('abc123', round.toUpperCase());
   await api.leaveRoom('ABC123', round);
   mock.respondWith({room_id: roomId, player_id: targetId, values, notes, updated_at: now, server_now: now});
   await api.getSpectatorState('ABC123', targetId, spectatorPuzzle, undefined, round);
   assert.deepEqual(mock.rpcCalls.map(call => call.name), [
-    'numora_set_ready', 'numora_start_room', 'numora_save_progress', 'numora_submit_solution', 'numora_leave_room', 'numora_spectate_player',
+    'numora_set_ready', 'numora_start_room', 'numora_save_progress', 'numora_submit_solution', 'numora_give_up_room', 'numora_leave_room', 'numora_spectate_player',
   ]);
   for (const call of mock.rpcCalls) assert.equal(call.args.p_round_id, round);
   const invalid = mockClient(); const invalidApi = createCompetitionApi(invalid.service);
@@ -212,9 +215,36 @@ test('round-aware requests bind readiness, start, progress, finish, leave, and s
   assert.equal(invalid.counts().sessionReads, 0);
 });
 
+test('give up sends only normalized room and round identity and returns the authoritative player state', async () => {
+  const mock = mockClient(); const api = createCompetitionApi(mock.service);
+  mock.respondWith({
+    room: { id: roomId, round_id: roomId, code: 'ABC123', host_id: userId, status: 'finished', size: 5, difficulty: 'Easy', starts_at: now, created_at: now },
+    players: [{ user_id: userId, nickname: 'Player', ready: true, progress_count: 0, finished_at: null, given_up_at: now, elapsed_ms: null, joined_at: now }],
+    puzzle: spectatorPuzzle,
+    self: { values: [...spectatorPuzzle.givens], notes: Array.from({ length: 25 }, () => []) },
+    server_now: now,
+  });
+  const next = await api.giveUpRoom(' abc123 ', roomId.toUpperCase());
+  assert.deepEqual(mock.rpcCalls, [{ name: 'numora_give_up_room', args: { p_code: 'ABC123', p_round_id: roomId } }]);
+  assert.equal(next.players[0].given_up_at, now);
+  assert.equal(next.players[0].elapsed_ms, null);
+  mock.failWith({ message: 'The room has already moved to another round. Reconnect to continue.' });
+  await assert.rejects(api.giveUpRoom('ABC123', roomId), /moved to a new round/);
+});
+
+test('give up rejects missing or malformed routing before authentication', () => {
+  const mock = mockClient(); const api = createCompetitionApi(mock.service);
+  assert.throws(() => api.giveUpRoom('ABC', roomId), /six-character/);
+  assert.throws(() => api.giveUpRoom('ABC123', 'bad-round'), /current round/);
+  assert.throws(() => api.giveUpRoom('ABC123', undefined as unknown as string), /current round/);
+  assert.equal(mock.counts().sessionReads, 0);
+  assert.equal(mock.rpcCalls.length, 0);
+});
+
 test('rematch permission, unfinished race, and stale-round feedback stay actionable', () => {
   assert.match(explainError({message: 'Only the room host can prepare another round.'}), /Only the room host can create the next game/);
   assert.match(explainError({message: 'Wait until everyone has finished before starting another round.'}), /Wait for everyone to finish/);
+  assert.match(explainError({message: 'Wait until every player has finished or given up before creating the next round.'}), /Wait for everyone to finish or give up/);
   assert.match(explainError({message: 'The room has already moved to another round. Reconnect to continue.'}), /moved to a new round/);
 });
 

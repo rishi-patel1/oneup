@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRoomSnapshotGate, getRoomTiming, normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomState, parseSpectatorState, RoomDataError } from './model';
+import { createRoomSnapshotGate, getRoomTiming, isPlayerDone, normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomState, parseSpectatorState, RoomDataError } from './model';
 
 const host = '11111111-1111-4111-8111-111111111111';
 const guest = '22222222-2222-4222-8222-222222222222';
@@ -85,6 +85,33 @@ test('duplicate identities and inconsistent finish records are rejected', () => 
   assert.throws(() => parseRoomState(invalidFinish), RoomDataError);
   const malformedWalls = state(); malformedWalls.puzzle.rightWalls.pop();
   assert.throws(() => parseRoomState(malformedWalls), RoomDataError);
+});
+
+test('given-up players are done without receiving a solved finish time or score', () => {
+  const raw = state();
+  const playing = parseRoomState(raw).players[0];
+  assert.equal(playing.given_up_at, null);
+  assert.equal(isPlayerDone(playing), false);
+  Object.assign(raw.players[0], { given_up_at: now });
+  const gaveUp = parseRoomState(raw).players[0];
+  assert.equal(gaveUp.given_up_at, now);
+  assert.equal(gaveUp.finished_at, null);
+  assert.equal(gaveUp.elapsed_ms, null);
+  assert.equal(isPlayerDone(gaveUp), true);
+  Object.assign(raw.players[0], { given_up_at: null, finished_at: now, elapsed_ms: 1234 });
+  assert.equal(isPlayerDone(parseRoomState(raw).players[0]), true);
+});
+
+test('give-up records reject invalid timestamps and incompatible solved scores', () => {
+  for (const patch of [
+    { given_up_at: 'invalid' },
+    { given_up_at: 1 },
+    { given_up_at: now, finished_at: now, elapsed_ms: 10 },
+    { given_up_at: now, elapsed_ms: 10 },
+  ]) {
+    const raw = state(); Object.assign(raw.players[0], patch);
+    assert.throws(() => parseRoomState(raw), RoomDataError);
+  }
 });
 
 function spectator() {

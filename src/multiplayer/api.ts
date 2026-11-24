@@ -7,6 +7,7 @@ import {
 } from './model';
 
 export type { PublicPuzzle, RoomPlayer, RoomState, SpectatorState } from './model';
+export { isPlayerDone } from './model';
 export { isSupabaseConfigured };
 
 class CompetitionError extends Error {}
@@ -33,11 +34,11 @@ export function explainError(error: unknown): string {
   if (status === 429 || /rate.limit|too many|room creation limit/.test(text)) return 'Too many attempts. Please wait a moment and try again.';
   if (status === 401 || /jwt|refresh token|session.*(expired|missing)|not authenticated|sign in/.test(text)) return 'Your connection expired. Refresh the page and reconnect.';
   if (/pause.*(?:changed|version)|timing.*changed|stale.*pause/.test(text)) return 'The pause state has changed. Reconnect to continue.';
-  if (/paused|resume countdown/.test(text)) return 'The room is paused. Everyone must be ready before play resumes.';
+  if (/paused|resume countdown/.test(text)) return 'The room is paused. Players still solving must be ready before play resumes.';
   if (/round.*(?:changed|stale)|stale.*round|moved.*round/.test(text)) return 'This room has moved to a new round. Reconnect to continue.';
   if (/only.*host.*(?:next|new|rematch|round|game)/.test(text)) return 'Only the room host can create the next game.';
-  if (/everyone.*finish|finish.*everyone|round.*(?:not finished|still running)/.test(text)) return 'Wait for everyone to finish before creating the next game.';
-  if (/spectat.*(?:finish|complet)|(?:finish|complet).*spectat|finish your (?:puzzle|race) before watch/.test(text)) return 'Finish your race before watching another player.';
+  if (/(?:everyone|every player).*finish|finish.*(?:everyone|every player)|round.*(?:not finished|still running)/.test(text)) return 'Wait for everyone to finish or give up before creating the next game.';
+  if (/spectat.*(?:finish|complet)|(?:finish|complet).*spectat|finish(?: or give up)? your (?:puzzle|race) before watch/.test(text)) return 'Finish or give up your race before watching another player.';
   if (/spectat.*(?:yourself|own)|(?:yourself|own).*spectat|choose another player.*watch/.test(text)) return 'Choose another player to watch.';
   if (/spectat.*(?:unavailable|not found)|target.*(?:not.*member|not found|same room)|player is not in this room/.test(text)) return 'That player is not available to watch in this room.';
   if (/room.*(not found|does not exist)|invalid room code|unknown room/.test(text)) return 'That room wasn’t found. Check the code and try again.';
@@ -121,6 +122,13 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     return { p_pause_version: version };
   }
 
+  const giveUpRoom = (code: string, roundId: string) => {
+    const roomCode = normalizeRoomCode(code);
+    const round = roundArguments(roundId);
+    if (!round.p_round_id) throw new CompetitionInputError('Reconnect to this room to load the current round.');
+    return rpc('numora_give_up_room', { p_code: roomCode, ...round });
+  };
+
   const pauseRoom = (code: string, roundId: string, version: number) => rpc('numora_pause_room', {
     p_code: normalizeRoomCode(code), ...roundArguments(roundId), ...pauseArguments(version),
   });
@@ -169,7 +177,7 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     const roomCode = normalizeRoomCode(code);
     const target = playerId.trim().toLowerCase();
     if (!isUuid(target)) throw new CompetitionInputError('Choose another player in this room to watch.');
-    // The RPC verifies the viewer's finish and both memberships on every request.
+    // The RPC verifies that the viewer finished or gave up and both memberships on every request.
     const data = await requestRpc('numora_spectate_player', { p_code: roomCode, p_player_id: target, ...roundArguments(roundId), ...pauseArguments(pauseVersion) }, signal);
     return parseSpectatorState(data, target, puzzle);
   }
@@ -214,8 +222,8 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     };
   }
 
-  return { getUserId, createRoom, rematchRoom, joinRoom, getRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom };
+  return { getUserId, createRoom, rematchRoom, joinRoom, getRoom, giveUpRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom };
 }
 
 const api = createCompetitionApi(supabase);
-export const { getUserId, createRoom, rematchRoom, joinRoom, getRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom } = api;
+export const { getUserId, createRoom, rematchRoom, joinRoom, getRoom, giveUpRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom } = api;

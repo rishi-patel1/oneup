@@ -265,8 +265,8 @@ test('post-finish spectating is authorized by the server and never grants write 
       await assert.rejects(asRole('anon', null, () => watch(code, GUEST)), /permission denied/);
       await assert.rejects(asRole('authenticated', null, () => watch(code, GUEST)), /Sign in before/);
       await assert.rejects(user(OUTSIDER, () => watch(code, GUEST)), /Join this room before spectating/);
-      await assert.rejects(user(HOST, () => watch(code, GUEST)), /Finish your puzzle before/);
-      await assert.rejects(user(GUEST, () => watch(code, HOST)), /Finish your puzzle before/);
+      await assert.rejects(user(HOST, () => watch(code, GUEST)), /Finish(?: or give up)? your puzzle before/);
+      await assert.rejects(user(GUEST, () => watch(code, HOST)), /Finish(?: or give up)? your puzzle before/);
     });
 
     await user(HOST, () => db.query('select public.numora_set_ready($1,true)', [code]));
@@ -279,7 +279,7 @@ test('post-finish spectating is authorized by the server and never grants write 
       await assert.rejects(user(HOST, () => watch(code, GUEST)), /race has not started yet/);
       await db.query('update public.numora_players set finished_at=null,elapsed_ms=null where room_id=$1 and user_id=$2', [roomId, HOST]);
       await db.query("update public.numora_rooms set starts_at=clock_timestamp()-interval '12 seconds' where id=$1", [roomId]);
-      await assert.rejects(user(HOST, () => watch(code, GUEST)), /Finish your puzzle before/);
+      await assert.rejects(user(HOST, () => watch(code, GUEST)), /Finish(?: or give up)? your puzzle before/);
     });
 
     await user(HOST, () => db.query('select public.numora_submit_solution($1,$2::integer[],$3::jsonb)', [code, puzzle.solution, JSON.stringify(notes)]));
@@ -320,7 +320,7 @@ test('post-finish spectating is authorized by the server and never grants write 
       assert.ok(Number.isFinite(Date.parse(watched.updated_at)));
       assert.ok(Date.parse(watched.server_now) >= Date.parse(watched.updated_at));
       assert.equal(JSON.stringify(watched).includes(puzzle.generation.seed), false);
-      await assert.rejects(user(GUEST, () => watch(code, HOST)), /Finish your puzzle before/);
+      await assert.rejects(user(GUEST, () => watch(code, HOST)), /Finish(?: or give up)? your puzzle before/);
     });
 
     await t.test('spectating returns the newest committed target progress without writing anything', async () => {

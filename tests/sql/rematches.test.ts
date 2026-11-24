@@ -18,7 +18,7 @@ const rematchAndLaterMigrations = files.filter(name => name >= rematchVersion)
   .map(name => readFileSync(new URL(name, directory), 'utf8')).join('\n');
 type State = {
   room: { id: string; round_id: string; code: string; host_id: string; status: string; starts_at: string | null; size: number; difficulty: string };
-  players: { user_id: string; nickname: string; ready: boolean; active: boolean; progress_count: number; finished_at: string | null; elapsed_ms: number | null }[];
+  players: { user_id: string; nickname: string; ready: boolean; active: boolean; progress_count: number; finished_at: string | null; given_up_at: string | null; elapsed_ms: number | null }[];
   self: { values: number[]; notes: number[][] } | null;
   puzzle: { id: string; givens: number[] } | null;
 };
@@ -87,7 +87,7 @@ test('same-room rematches retain the roster and isolate each round', async t => 
     });
     await t.test('rematch keeps room code, players, nicknames and settings; archives results and resets all private drafts', async () => {
       const before = await read(HOST);
-      const oldResults = before.players.map(({ user_id, nickname, finished_at, elapsed_ms }) => ({ user_id, nickname, finished_at, elapsed_ms }));
+      const oldResults = before.players.map(({ user_id, nickname, finished_at, given_up_at, elapsed_ms }) => ({ user_id, nickname, finished_at, given_up_at, elapsed_ms }));
       // A departed finished player is still a member; do not infer membership from presence.
       await user(GUEST, () => rpc('select public.numora_leave_room($1,$2)', [code, firstRound]));
       assert.equal(await rematch(), code);
