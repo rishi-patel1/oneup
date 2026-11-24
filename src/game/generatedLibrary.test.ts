@@ -12,7 +12,7 @@ test('puzzle codes roundtrip settings including Unicode and delimiters in the se
 });
 
 test('Numora codes and legacy One Up codes reproduce the same board and saved-game identity', () => {
-  const options = { size: 6 as const, difficulty: 'Medium' as const, seed: 'rename-check' };
+  const options = { size: 6 as const, difficulty: 'Medium' as const, seed: 'rename-check', version: '1' };
   const original = generatePuzzle(options);
   const code = formatPuzzleCode(original);
   assert.equal(code, 'numora:1:6:medium:rename-check');
@@ -34,6 +34,9 @@ test('restoration rejects malformed boards and mismatched generation metadata', 
   corrupted.givens[0] = puzzle.size + 1;
   assert.deepEqual(readGeneratedPuzzles([corrupted]), []);
   assert.equal(readGeneratedPuzzles([puzzle, puzzle]).length, 1);
+  const legacy = generatePuzzle({ size: 5, difficulty: 'Easy', seed: 'saved-before-segments', version: '1' });
+  assert.deepEqual(readGeneratedPuzzles([legacy, puzzle]), [legacy, puzzle]);
+  assert.deepEqual(generatePuzzle(parsePuzzleCode(formatPuzzleCode(legacy))!), legacy);
 });
 
 test('the recent library retains the latest board, deduplicates IDs, and is bounded', () => {

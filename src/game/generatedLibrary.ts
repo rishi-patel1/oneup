@@ -1,5 +1,5 @@
 import { verifyPuzzle, type Difficulty } from './engine';
-import { GENERATOR_VERSION, getGeneratedPuzzleId, normalizeSeed, type GeneratedPuzzle, type GenerationOptions } from './generator';
+import { GENERATOR_VERSION, SUPPORTED_GENERATOR_VERSIONS, getGeneratedPuzzleId, normalizeSeed, type GeneratedPuzzle, type GenerationOptions } from './generator';
 import { LEGACY_PUZZLE_CODE_PREFIX, PUZZLE_CODE_PREFIX } from '../branding';
 
 export const RECENT_PUZZLE_LIMIT = 12;
@@ -9,14 +9,18 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Restore only intact boards created by the supported generator version. */
+function supportedVersion(value: unknown): value is string {
+  return typeof value === 'string' && SUPPORTED_GENERATOR_VERSIONS.some(version => version === value);
+}
+
+/** Restore intact boards from supported versions without changing their saved identity. */
 export function readGeneratedPuzzles(raw: unknown): GeneratedPuzzle[] {
   if (!Array.isArray(raw)) return [];
   const result: GeneratedPuzzle[] = [];
   for (const value of raw.slice(0, RECENT_PUZZLE_LIMIT)) {
     if (!record(value) || !record(value.generation)) continue;
     const generation = value.generation;
-    if (generation.version !== GENERATOR_VERSION || typeof generation.seed !== 'string' ||
+    if (!supportedVersion(generation.version) || typeof generation.seed !== 'string' ||
       !DIFFICULTIES.includes(generation.requestedDifficulty as Difficulty) ||
       ![5, 6, 7, 8].includes(value.size as number) || typeof value.title !== 'string' || value.title.length > 80 ||
       typeof value.description !== 'string' || value.description.length > 300 ||
@@ -26,7 +30,7 @@ export function readGeneratedPuzzles(raw: unknown): GeneratedPuzzle[] {
         Number((generation.rating as Record<string, unknown>)[key]) < 0,
     )) continue;
     try {
-      const options: GenerationOptions = { size: value.size as GenerationOptions['size'], difficulty: generation.requestedDifficulty as Difficulty, seed: generation.seed };
+      const options: GenerationOptions = { size: value.size as GenerationOptions['size'], difficulty: generation.requestedDifficulty as Difficulty, seed: generation.seed, version: generation.version };
       if (value.id !== getGeneratedPuzzleId(options) || normalizeSeed(generation.seed) !== generation.seed ||
         value.difficulty !== options.difficulty) continue;
       const puzzle = value as unknown as GeneratedPuzzle;
@@ -63,10 +67,11 @@ export function isPuzzleCode(text: string): boolean {
 
 export function parsePuzzleCode(text: string): GenerationOptions | null {
   const match = /^[^:]+:([^:]+):([5-8]):(easy|medium|hard):(.+)$/i.exec(text.trim());
-  if (!match || !isPuzzleCode(text) || match[1] !== GENERATOR_VERSION) return null;
+  if (!match || !isPuzzleCode(text) || !supportedVersion(match[1])) return null;
   try {
     const difficulty = DIFFICULTIES.find(level => level.toLowerCase() === match[3].toLowerCase())!;
-    return { size: Number(match[2]) as GenerationOptions['size'], difficulty, seed: normalizeSeed(decodeURIComponent(match[4])) };
+    return { size: Number(match[2]) as GenerationOptions['size'], difficulty, seed: normalizeSeed(decodeURIComponent(match[4])),
+      ...(match[1] === GENERATOR_VERSION ? {} : { version: match[1] }) };
   } catch { return null; }
 }
 
