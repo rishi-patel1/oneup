@@ -224,6 +224,19 @@
   align-items:start;
   gap:32px
 }
+.arena-rejoin-grid {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:12px;
+  margin-bottom:20px
+}
+.arena-rejoin-grid>button {
+  display:inline-flex;
+  align-items:center;
+  gap:7px
+}
 .arena-play-panel {
   background:var(--surface);
   border:1px solid var(--line);

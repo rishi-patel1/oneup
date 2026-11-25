@@ -36,19 +36,20 @@ Deno.serve(createRematchHandler({
     }
     return data;
   },
-  rematch: async (hostId, code, roundId, puzzle) => {
+  prepareGrid: async (hostId, code, roundId, phase, puzzle) => {
     const admin = createClient(url, serverKey, { auth: noSession });
-    const { data, error } = await admin.rpc('numora_rematch_room', {
-      p_host_id: hostId, p_code: code, p_round_id: roundId, p_puzzle: puzzle,
+    const { data, error } = await admin.rpc('numora_prepare_room_grid', {
+      p_host_id: hostId, p_code: code, p_round_id: roundId, p_phase: phase, p_puzzle: puzzle,
     });
     if (error) {
-      if (error.code === '42501') throw new RematchRequestError(403, 'Only the room host can prepare another round.');
+      if (error.code === '42501') throw new RematchRequestError(403, 'Only the room host can apply a grid choice.');
       if (error.code === 'P0001') {
         if (/too many/i.test(error.message)) throw new RematchRequestError(429, 'Too many attempts. Please wait a moment and try again.');
         throw new RematchRequestError(409, 'The room has changed. Reconnect before preparing another round.');
       }
       if (error.code === '22023') {
         if (/round.*changed/i.test(error.message)) throw new RematchRequestError(409, 'The room has already moved to another round. Reconnect to continue.');
+        if (/phase/i.test(error.message)) throw new RematchRequestError(409, 'The grid voting phase has changed. Reconnect to see the current choice.');
         throw new RematchRequestError(400, 'The next puzzle could not be prepared. Please try again.');
       }
       if (error.code === 'PGRST202') throw new RematchRequestError(503, 'Another round is not available yet. Please try again later.');

@@ -6,11 +6,12 @@ export class RematchRequestError extends Error {
 }
 
 export interface RematchUser { id: string; token: string }
+export type GridPhase = 'lobby' | 'finished';
 
 interface Dependencies {
   authenticate: (request: Request) => Promise<RematchUser | null>;
   getRoom: (token: string, code: string) => Promise<unknown>;
-  rematch: (hostId: string, code: string, roundId: string, puzzle: GeneratedPuzzle) => Promise<string>;
+  prepareGrid: (hostId: string, code: string, roundId: string, phase: GridPhase, puzzle: GeneratedPuzzle) => Promise<string>;
   generate?: typeof generatePuzzle;
   corsHeaders: Record<string, string>;
 }
@@ -18,7 +19,7 @@ interface Dependencies {
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** A verified host can replace only the finished round they actually viewed. */
+/** A verified host can prepare only the lobby or finished round they actually viewed. */
 export function createRematchHandler(dependencies: Dependencies) {
   const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), {
     status, headers: { ...dependencies.corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
@@ -42,6 +43,13 @@ export function createRematchHandler(dependencies: Dependencies) {
       if (!/^[A-Z0-9]{6}$/.test(code) || !uuid.test(roundId)) {
         return reply(400, { error: 'Reconnect to the room before starting another round.' });
       }
+      // Legacy rematches keep their existing settings and require a finished race.
+      const phase = body.phase === undefined ? 'finished' : body.phase;
+      if (phase !== 'lobby' && phase !== 'finished') return reply(400, { error: 'Choose a lobby or finished-round grid phase.' });
+      if ((body.size !== undefined && ![5, 6, 7, 8].includes(body.size as number)) ||
+        (body.difficulty !== undefined && !['Easy', 'Medium', 'Hard'].includes(body.difficulty as string))) {
+        return reply(400, { error: 'Choose a grid size from 5 through 8 and a difficulty.' });
+      }
 
       // Check the caller's scoped membership and host status before generating a board.
       const state = await dependencies.getRoom(user.token, code);
@@ -50,20 +58,20 @@ export function createRematchHandler(dependencies: Dependencies) {
       if (room.code !== code || typeof room.host_id !== 'string' || !uuid.test(room.host_id) ||
         typeof room.round_id !== 'string' || !uuid.test(room.round_id)) throw new Error('Unexpected room context.');
       if (room.host_id.toLowerCase() !== user.id.toLowerCase()) {
-        return reply(403, { error: 'Only the room host can prepare another round.' });
+        return reply(403, { error: 'Only the room host can apply a grid choice.' });
       }
       if (room.round_id.toLowerCase() !== roundId) return reply(409, { error: 'The room has already moved to another round. Reconnect to continue.' });
-      if (room.status !== 'finished') return reply(409, { error: 'Wait until everyone has finished before starting another round.' });
+      if (room.status !== phase) return reply(409, { error: 'The grid voting phase has changed. Reconnect to see the current choice.' });
       if (![5, 6, 7, 8].includes(room.size as number) || !['Easy', 'Medium', 'Hard'].includes(room.difficulty as string)) {
         throw new Error('Unexpected room settings.');
       }
       const puzzle = (dependencies.generate ?? generatePuzzle)({
-        size: room.size as 5 | 6 | 7 | 8,
-        difficulty: room.difficulty as Difficulty,
+        size: (body.size ?? room.size) as 5 | 6 | 7 | 8,
+        difficulty: (body.difficulty ?? room.difficulty) as Difficulty,
         seed: crypto.randomUUID(),
       });
       // The database locks the room and repeats authorization/round checks atomically.
-      const nextCode = await dependencies.rematch(user.id, code, roundId, puzzle);
+      const nextCode = await dependencies.prepareGrid(user.id, code, roundId, phase, puzzle);
       if (nextCode !== code) throw new Error('Unexpected room code.');
       return reply(201, { code });
     } catch (cause) {

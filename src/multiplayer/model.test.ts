@@ -114,6 +114,37 @@ test('give-up records reject invalid timestamps and incompatible solved scores',
   }
 });
 
+test('grid votes are public settings for the current lobby or finished round, with legacy responses defaulting to no vote', () => {
+  assert.equal(parseRoomState(state()).players[0].grid_vote, null);
+  const raw = state();
+  Object.assign(raw.room, { status: 'lobby', starts_at: null });
+  Object.assign(raw, { puzzle: null, self: null });
+  const choice = { size: 8, difficulty: 'Hard' };
+  Object.assign(raw.players[0], { grid_vote: choice });
+  const parsed = parseRoomState(raw);
+  assert.deepEqual(parsed.players[0].grid_vote, choice);
+  parsed.players[0].grid_vote!.size = 5;
+  assert.equal(choice.size, 8);
+  const finished = state();
+  Object.assign(finished.room, { status: 'finished' });
+  Object.assign(finished.players[1], { grid_vote: { size: 6, difficulty: 'Medium' } });
+  assert.deepEqual(parseRoomState(finished).players[1].grid_vote, { size: 6, difficulty: 'Medium' });
+});
+
+test('grid vote DTOs reject malformed, secret-bearing and in-race ballots', () => {
+  const invalids: unknown[] = [false, [], 8, {}, { size: 4, difficulty: 'Easy' }, { size: 9, difficulty: 'Easy' },
+    { size: '5', difficulty: 'Easy' }, { size: 5.5, difficulty: 'Easy' }, { size: 5, difficulty: 'Expert' },
+    { size: 5, difficulty: null }, { size: 5, difficulty: 'Easy', seed: 'hidden' },
+    { size: 5, difficulty: 'Easy', solution: [] }, { size: 5, difficulty: 'Easy', metadata: {} }];
+  for (const grid_vote of invalids) {
+    const raw = state(); Object.assign(raw.room, { status: 'finished' });
+    Object.assign(raw.players[0], { grid_vote });
+    assert.throws(() => parseRoomState(raw), RoomDataError);
+  }
+  const playing = state(); Object.assign(playing.players[0], { grid_vote: { size: 5, difficulty: 'Easy' } });
+  assert.throws(() => parseRoomState(playing), RoomDataError);
+});
+
 function spectator() {
   return {
     room_id: roomId, player_id: guest,

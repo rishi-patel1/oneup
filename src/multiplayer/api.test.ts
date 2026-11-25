@@ -193,6 +193,56 @@ test('a rematch sends only the current room and round to the trusted generator',
   assert.equal(invalid.functionCalls.length, 0);
 });
 
+test('grid votes send the exact round and phase, can be replaced or cleared, and trust the server response', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  await api.voteRoomGrid(' abc123 ', roomId.toUpperCase(), 'lobby', { size: 8, difficulty: 'Hard' });
+  await api.voteRoomGrid('ABC123', roomId, 'finished', { size: 6, difficulty: 'Medium' });
+  await api.voteRoomGrid('ABC123', roomId, 'finished', null);
+  assert.deepEqual(mock.rpcCalls, [
+    { name: 'numora_vote_grid', args: { p_code: 'ABC123', p_round_id: roomId, p_phase: 'lobby', p_size: 8, p_difficulty: 'Hard' } },
+    { name: 'numora_vote_grid', args: { p_code: 'ABC123', p_round_id: roomId, p_phase: 'finished', p_size: 6, p_difficulty: 'Medium' } },
+    { name: 'numora_vote_grid', args: { p_code: 'ABC123', p_round_id: roomId, p_phase: 'finished', p_size: null, p_difficulty: null } },
+  ]);
+  mock.failWith({ code: '22023', message: 'The grid voting phase has changed.' });
+  await assert.rejects(api.voteRoomGrid('ABC123', roomId, 'lobby', null), /voting has changed/);
+});
+
+test('host grid choices send validated settings and expected phase to server generation', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  await api.rematchRoom(' abc123 ', roomId.toUpperCase(), { size: 8, difficulty: 'Hard', phase: 'lobby' });
+  await api.rematchRoom('ABC123', roomId, { size: 5, difficulty: 'Easy', phase: 'finished' });
+  assert.deepEqual(mock.functionCalls, [
+    ['numora-rematch-room', { body: { code: 'ABC123', round_id: roomId, size: 8, difficulty: 'Hard', phase: 'lobby' } }],
+    ['numora-rematch-room', { body: { code: 'ABC123', round_id: roomId, size: 5, difficulty: 'Easy', phase: 'finished' } }],
+  ]);
+  assert.ok(mock.rpcCalls.every(call => call.name === 'numora_get_room'));
+});
+
+test('bad grid settings, missing current rounds, and in-race phases fail before authentication', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  for (const choice of [{ size: 4, difficulty: 'Easy' }, { size: 9, difficulty: 'Easy' }, { size: 5.5, difficulty: 'Easy' }, { size: 5, difficulty: 'Expert' }]) {
+    assert.throws(() => api.voteRoomGrid('ABC123', roomId, 'lobby', choice as never), /grid size/);
+    await assert.rejects(api.rematchRoom('ABC123', roomId, { ...choice, phase: 'finished' } as never), /grid size/);
+  }
+  assert.throws(() => api.voteRoomGrid('ABC123', roomId, 'racing' as never, null), /when grid voting is open/);
+  assert.throws(() => api.voteRoomGrid('ABC123', undefined as never, 'lobby', null), /current round/);
+  await assert.rejects(api.rematchRoom('ABC123', roomId, { size: 5, difficulty: 'Easy', phase: 'racing' as never }), /when grid voting is open/);
+  assert.equal(mock.counts().sessionReads, 0);
+  assert.equal(mock.rpcCalls.length, 0);
+  assert.equal(mock.functionCalls.length, 0);
+});
+
+test('grid voting and host-choice errors keep safe, specific feedback', () => {
+  assert.match(explainError({ message: 'The grid voting phase has changed. Reconnect.' }), /voting has changed/);
+  assert.match(explainError({ message: 'Only the room host can apply a grid choice.' }), /Only the room host can apply/);
+  assert.match(explainError({ message: 'Choose a grid size from 5 through 8 and a difficulty.' }), /grid size from 5 through 8/);
+  assert.match(explainError({ code: '42501', message: 'Join this room before voting for a grid.' }), /Rejoin this room before voting/);
+  assert.match(explainError({ code: '42501', message: 'Only the room host can choose the final grid.' }), /Only the room host can apply/);
+  assert.match(explainError({ code: '22023', message: 'Grid voting has moved to a different phase. Refresh the room and try again.' }), /voting has changed/);
+  assert.match(explainError({ code: '22023', message: 'Grid choice has moved to a different phase. Refresh the room and try again.' }), /voting has changed/);
+  assert.match(explainError({ code: '22023', message: 'Choose a grid size from 5 to 8 and Easy, Medium, or Hard.' }), /grid size from 5 through 8/);
+});
+
 test('round-aware requests bind readiness, start, progress, finish, give up, leave, and spectating to one round', async () => {
   const mock = mockClient(); const api = createCompetitionApi(mock.service);
   const round = '44444444-4444-4444-8444-444444444444';

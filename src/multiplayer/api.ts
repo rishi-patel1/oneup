@@ -3,10 +3,10 @@ import { supabase, isSupabaseConfigured } from '../utils/supabase';
 import type { Difficulty } from '../game/engine';
 import {
   CompetitionInputError, RoomDataError, isUuid, normalizeNickname, normalizeProgress,
-  normalizeRoomCode, parseRoomState, parseSpectatorState, type PublicPuzzle, type RoomState, type SpectatorState,
+  normalizeRoomCode, parseRoomState, parseSpectatorState, type GridVotePhase, type PublicPuzzle, type RoomState, type SpectatorState,
 } from './model';
 
-export type { PublicPuzzle, RoomPlayer, RoomState, SpectatorState } from './model';
+export type { GridChoice, GridVotePhase, PublicPuzzle, RoomPlayer, RoomState, SpectatorState } from './model';
 export { isPlayerDone } from './model';
 export { isSupabaseConfigured };
 
@@ -36,6 +36,10 @@ export function explainError(error: unknown): string {
   if (/pause.*(?:changed|version)|timing.*changed|stale.*pause/.test(text)) return 'The pause state has changed. Reconnect to continue.';
   if (/paused|resume countdown/.test(text)) return 'The room is paused. Players still solving must be ready before play resumes.';
   if (/round.*(?:changed|stale)|stale.*round|moved.*round/.test(text)) return 'This room has moved to a new round. Reconnect to continue.';
+  if (/phase|voting.*(?:closed|available|lobby|finished)|grid choice.*changed/.test(text)) return 'Grid voting has changed. Reconnect to see the current choice.';
+  if (/only.*host.*grid/.test(text)) return 'Only the room host can apply the grid choice.';
+  if (/join.*before voting/.test(text)) return 'Rejoin this room before voting for a grid.';
+  if (/grid vote|grid size|grid difficulty/.test(text)) return 'Choose a grid size from 5 through 8 and a difficulty.';
   if (/only.*host.*(?:next|new|rematch|round|game)/.test(text)) return 'Only the room host can create the next game.';
   if (/(?:everyone|every player).*finish|finish.*(?:everyone|every player)|round.*(?:not finished|still running)/.test(text)) return 'Wait for everyone to finish or give up before creating the next game.';
   if (/spectat.*(?:finish|complet)|(?:finish|complet).*spectat|finish(?: or give up)? your (?:puzzle|race) before watch/.test(text)) return 'Finish or give up your race before watching another player.';
@@ -129,6 +133,23 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     return rpc('numora_give_up_room', { p_code: roomCode, ...round });
   };
 
+  function gridSettings(choice: { size: number; difficulty: Difficulty }) {
+    if (!choice || ![5, 6, 7, 8].includes(choice.size) || !['Easy', 'Medium', 'Hard'].includes(choice.difficulty)) {
+      throw new CompetitionInputError('Choose a grid size from 5 through 8 and a difficulty.');
+    }
+    return { size: choice.size, difficulty: choice.difficulty };
+  }
+  function gridPhase(phase: GridVotePhase): GridVotePhase {
+    if (phase !== 'lobby' && phase !== 'finished') throw new CompetitionInputError('Reconnect to see when grid voting is open.');
+    return phase;
+  }
+  const voteRoomGrid = (code: string, roundId: string, phase: GridVotePhase, choice: { size: number; difficulty: Difficulty } | null) => {
+    const roomCode = normalizeRoomCode(code), round = roundArguments(roundId), currentPhase = gridPhase(phase);
+    if (!round.p_round_id) throw new CompetitionInputError('Reconnect to this room to load the current round.');
+    const settings = choice === null ? null : gridSettings(choice);
+    return rpc('numora_vote_grid', { p_code: roomCode, ...round, p_phase: currentPhase, p_size: settings?.size ?? null, p_difficulty: settings?.difficulty ?? null });
+  };
+
   const pauseRoom = (code: string, roundId: string, version: number) => rpc('numora_pause_room', {
     p_code: normalizeRoomCode(code), ...roundArguments(roundId), ...pauseArguments(version),
   });
@@ -137,13 +158,14 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     return rpc('numora_set_resume_ready', { p_code: normalizeRoomCode(code), ...roundArguments(roundId), p_pause_id: pauseId.toLowerCase(), p_ready: ready });
   };
 
-  async function rematchRoom(code: string, roundId: string): Promise<RoomState> {
+  async function rematchRoom(code: string, roundId: string, options?: { size: number; difficulty: Difficulty; phase: GridVotePhase }): Promise<RoomState> {
     const roomCode = normalizeRoomCode(code);
     const { p_round_id } = roundArguments(roundId);
     if (!p_round_id) throw new CompetitionInputError('Reconnect to this room to load the current round.');
+    const settings = options === undefined ? {} : { ...gridSettings(options), phase: gridPhase(options.phase) };
     const service = requireClient();
     await getUserId();
-    const { data, error } = await service.functions.invoke('numora-rematch-room', { body: { code: roomCode, round_id: p_round_id } });
+    const { data, error } = await service.functions.invoke('numora-rematch-room', { body: { code: roomCode, round_id: p_round_id, ...settings } });
     if (error) throw await functionError(error);
     if (!data || data.code !== roomCode) throw new RoomDataError();
     return getRoom(roomCode);
@@ -222,8 +244,8 @@ export function createCompetitionApi(client: SupabaseClient | null) {
     };
   }
 
-  return { getUserId, createRoom, rematchRoom, joinRoom, getRoom, giveUpRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom };
+  return { getUserId, createRoom, rematchRoom, voteRoomGrid, joinRoom, getRoom, giveUpRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom };
 }
 
 const api = createCompetitionApi(supabase);
-export const { getUserId, createRoom, rematchRoom, joinRoom, getRoom, giveUpRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom } = api;
+export const { getUserId, createRoom, rematchRoom, voteRoomGrid, joinRoom, getRoom, giveUpRoom, setReady, startRoom, pauseRoom, setResumeReady, saveProgress, submitSolution, getSpectatorState, leaveRoom, watchRoom } = api;

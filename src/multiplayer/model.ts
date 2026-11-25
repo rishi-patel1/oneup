@@ -2,6 +2,8 @@ import { getConflicts, type Difficulty, type Puzzle } from '../game/engine';
 
 export type PublicPuzzle = Omit<Puzzle, 'solution'>;
 export type RoomStatus = 'lobby' | 'racing' | 'finished';
+export type GridVotePhase = 'lobby' | 'finished';
+export interface GridChoice { size: 5 | 6 | 7 | 8; difficulty: Difficulty }
 
 export interface RoomPlayer {
   user_id: string;
@@ -12,6 +14,7 @@ export interface RoomPlayer {
   progress_count: number;
   finished_at: string | null;
   given_up_at: string | null;
+  grid_vote: GridChoice | null;
   elapsed_ms: number | null;
   joined_at: string;
 }
@@ -205,11 +208,20 @@ export function parseRoomState(raw: unknown): RoomState {
       (date(candidate.finished_at) && whole(candidate.elapsed_ms, 0, Number.MAX_SAFE_INTEGER)));
     const givenUpAt = candidate.given_up_at === undefined ? null : candidate.given_up_at;
     ensure(givenUpAt === null || (date(givenUpAt) && candidate.finished_at === null && candidate.elapsed_ms === null));
+    const vote = candidate.grid_vote ?? null;
+    let gridVote: GridChoice | null = null;
+    if (vote !== null) {
+      ensure(source.status === 'lobby' || source.status === 'finished');
+      ensure(record(vote) && Object.keys(vote).every(key => key === 'size' || key === 'difficulty'));
+      ensure(sizes.includes(vote.size as number) && levels.includes(vote.difficulty as Difficulty));
+      gridVote = { size: vote.size as GridChoice['size'], difficulty: vote.difficulty as Difficulty };
+    }
     players.push({
       user_id: candidate.user_id, nickname, ready: candidate.ready, active: candidate.active ?? true,
       resume_ready: candidate.resume_ready ?? false,
       progress_count: candidate.progress_count, finished_at: candidate.finished_at as string | null,
       given_up_at: givenUpAt,
+      grid_vote: gridVote,
       elapsed_ms: candidate.elapsed_ms as number | null, joined_at: candidate.joined_at,
     });
   }
