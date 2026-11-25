@@ -29,7 +29,7 @@ function time(ms: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
-export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => void; onDaily: () => void }) {
+export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: () => void; onDaily: () => void; onLearn: () => void }) {
   const [nickname, setNickname] = useState(() => stored(NAME_KEY));
   const [code, setCode] = useState(requestedCode);
   const [entryMode, setEntryMode] = useState<'create' | 'join'>(() => requestedCode() ? 'join' : 'create');
@@ -169,7 +169,7 @@ export default function CompetitionPage({ onSolo, onDaily }: { onSolo: () => voi
   return <div className="app-shell arena-shell">
     <header className="site-header arena-header with-account">
       <a className="brand" href="#" aria-label={`${APP_NAME} solo play`} onClick={event => { event.preventDefault(); onSolo(); }}><span className="brand-mark"><BrandMark /></span><span>{APP_NAME}<span className="brand-period">.</span></span></a>
-      <nav aria-label="Main navigation"><button className="nav-link" onClick={onSolo}>Solo</button><button className="nav-link" onClick={onDaily}>Daily</button><button className="nav-link active" aria-current="page">Compete</button></nav>
+      <nav aria-label="Main navigation"><button className="nav-link" onClick={onSolo}>Solo play</button><button className="nav-link" onClick={onDaily}>Daily</button><button className="nav-link active" aria-current="page">Compete</button><button className="nav-link" onClick={onLearn}>Learn</button></nav>
       <AccountButton />
     </header>
 

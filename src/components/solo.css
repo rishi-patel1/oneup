@@ -1,0 +1,75 @@
+.solo-play-layout {
+  display:grid;
+  grid-template-columns:minmax(300px,370px) minmax(360px,590px);
+  align-items:start;
+  justify-content:center;
+  gap:34px;
+  padding-bottom:36px;
+}
+.solo-creation-card,.solo-recent {
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:26px;
+  box-shadow:var(--shadow);
+}
+.solo-creation-card .modal-symbol {width:44px;height:44px;margin-bottom:18px}
+.solo-creation-card .eyebrow {font-size:10px;letter-spacing:1.4px;color:var(--muted)}
+.solo-creation-card h2 {font-size:24px;line-height:1.3;letter-spacing:-.8px;margin:10px 0 12px}
+.solo-creation-card .new-puzzle-form>p {font-size:16px;line-height:1.7;color:var(--muted)}
+.solo-creation-card .new-puzzle-form .generation-help {font-size:13px}
+.solo-creation-card .difficulty-options {gap:6px}
+.solo-creation-card .generation-choice small {display:none}
+.solo-creation-card .new-puzzle-form .modal-actions {display:flex;flex-wrap:wrap;gap:10px}
+.solo-creation-card .modal-actions button {min-width:0;min-height:46px}
+.solo-creation-card .modal-actions .secondary-button {flex-basis:100%}
+.solo-creation-card .new-puzzle-form .primary-button {width:100%}
+.solo-new-puzzle {white-space:nowrap}
+.solo-recent {margin-top:18px;padding:20px}
+.solo-recent>summary {display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:15px;font-weight:600;cursor:pointer;list-style:none}
+.solo-recent>summary::-webkit-details-marker {display:none}
+.solo-recent>summary::after {content:'+';font-size:20px;color:var(--muted);font-weight:400}
+.solo-recent[open]>summary::after {content:'−'}
+.solo-recent>summary>span {margin-left:auto;color:var(--muted);font-size:13px}
+.solo-recent>p {margin-top:10px;font-size:13px;color:var(--muted)}
+.solo-recent .generated-list {margin-top:12px;max-height:290px}
+.solo-recent .generated-item .puzzle-item-info>span {max-width:200px}
+.solo-game-options {display:flex;align-items:center;justify-content:space-between;gap:20px;padding:14px 0;border-top:1px solid var(--line)}
+.solo-game-options .switch-label {gap:12px}
+.solo-progress {font-size:13px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.solo-shell .site-header.with-account>nav,.learn-shell .site-header.with-account>nav {gap:26px}
+
+@media(min-width:721px) and (max-width:1000px) {
+  .app-shell>.site-header.with-account {display:grid;grid-template-columns:1fr auto;gap:0 16px;height:auto;min-height:118px;padding:18px 0 0}
+  .app-shell>.site-header.with-account>.brand {grid-column:1;grid-row:1}
+  .app-shell>.site-header.with-account>.account-control,.app-shell>.site-header.with-account>.header-actions {grid-column:2;grid-row:1;margin-left:0;justify-self:end}
+  .app-shell>.site-header.with-account>nav {grid-column:1/-1;grid-row:2;margin-left:0;justify-content:center;gap:32px;min-height:50px}
+}
+@media(max-width:1000px) {
+  .solo-play-layout {grid-template-columns:minmax(280px,330px) minmax(340px,1fr);gap:24px}
+  .solo-creation-card {padding:22px}
+  .solo-play-layout .game-card {padding:24px 24px 0}
+  .solo-creation-card h2 {font-size:22px}
+}
+@media(max-width:720px) {
+  .solo-play-layout {display:flex;flex-direction:column;gap:20px}
+  .solo-play-layout>.game-card {order:0;width:100%;padding:22px 20px 0}
+  .solo-creation {order:1;width:100%}
+  .solo-creation-card {padding:24px}
+  .solo-creation-card .generation-choice small {display:block}
+  .solo-creation-card h2 {font-size:24px}
+  .solo-shell .page-intro {display:flex;flex-wrap:wrap;gap:0 15px}
+  .solo-new-puzzle {font-size:14px;margin-top:15px}
+  .app-shell>.site-header.with-account>nav {gap:23px}
+  .app-shell>.site-header.with-account .nav-link {font-size:14px}
+  .solo-game-options {gap:10px}
+  .solo-game-options .switch-label strong {font-size:13px}
+  .solo-game-options .switch-label>span>span {font-size:11px}
+  .solo-progress {font-size:12px}
+}
+@media(max-width:380px) {
+  .app-shell>.site-header.with-account>nav {gap:18px}
+  .app-shell>.site-header.with-account .nav-link {font-size:13px}
+  .solo-play-layout>.game-card {padding-left:16px;padding-right:16px}
+  .solo-creation-card {padding:21px}
+}

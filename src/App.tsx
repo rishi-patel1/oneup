@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CheckCheck, ChevronDown,
-  ChevronRight, CircleHelp, Clock3, Copy, Eraser, Grid2X2, Lightbulb, Moon,
+  Check, CheckCheck, Clock3, Copy, Eraser, Lightbulb, Moon,
   Pause, Pencil, Play, Redo2, RotateCcw, Sparkles, Sun, Trophy, Undo2, X,
 } from 'lucide-react';
 import { getMistakes, getSegments, isSolved } from './game/engine';
@@ -12,6 +11,8 @@ import type { Session, SessionAction } from './game/session';
 import type { GeneratedPuzzle } from './game/generator';
 import { addGeneratedPuzzle, formatPuzzleCode, persistGeneratedLibrary, readGeneratedPuzzles } from './game/generatedLibrary';
 import NewPuzzleForm from './components/NewPuzzleForm';
+import LearnPage from './components/LearnPage';
+import './components/solo.css';
 import BrandMark from './components/BrandMark';
 import { APP_NAME, STORAGE_PREFIX } from './branding';
 import CompetitionPage from './components/CompetitionPage';
@@ -21,7 +22,8 @@ import { useAccount } from './account/AccountProvider';
 
 const STORAGE = STORAGE_PREFIX;
 type Preferences = { theme: 'light' | 'dark'; autoCheck: boolean; notesMode: boolean };
-type Modal = 'help' | 'reset' | 'new' | null;
+type Modal = 'reset' | null;
+type View = 'solo' | 'learn' | 'compete' | 'daily';
 
 function readStorage(key: string): unknown {
   try { return JSON.parse(localStorage.getItem(STORAGE + key) ?? 'null'); }
@@ -64,9 +66,9 @@ function firstOpen(puzzle: Puzzle, values: number[]) {
 
 export default function App() {
   const account = useAccount();
-  const [view, setView] = useState<'solo' | 'compete' | 'daily'>(() => {
+  const [view, setView] = useState<View>(() => {
     const query = new URLSearchParams(window.location.search);
-    return query.get('view') === 'daily' ? 'daily' : query.has('room') || query.get('view') === 'compete' ? 'compete' : 'solo';
+    return query.get('view') === 'learn' ? 'learn' : query.get('view') === 'daily' ? 'daily' : query.has('room') || query.get('view') === 'compete' ? 'compete' : 'solo';
   });
   const [puzzle, setPuzzle] = useState(initialPuzzle);
   const [session, setSession] = useState<Session>(() => loadSession(initialPuzzle()));
@@ -76,13 +78,12 @@ export default function App() {
   const [generatedStorageAvailable, setGeneratedStorageAvailable] = useState(true);
   const [shiftHeld, setShiftHeld] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
-  const [collectionOpen, setCollectionOpen] = useState(false);
   const [checked, setChecked] = useState(false);
   const [message, setMessage] = useState('');
   const [storageAvailable, setStorageAvailable] = useState(true);
   const [libraryRevision, setLibraryRevision] = useState(0);
   const boardRef = useRef<HTMLDivElement>(null);
-  const collectionRef = useRef<HTMLElement>(null);
+  const creationRef = useRef<HTMLElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const lastFocused = useRef<HTMLElement | null>(null);
   const resumeAfterDialog = useRef(false);
@@ -113,7 +114,6 @@ export default function App() {
     puzzle: p,
     saved: p.id === puzzle.id ? session : restoreSession(p, readStorage(`puzzle:${p.id}`)),
   })), [generatedPuzzles, puzzle.id, session.status, session.values, libraryRevision]);
-  const completed = library.filter(p => p.saved?.status === 'completed').length;
 
   useEffect(() => {
     document.documentElement.dataset.theme = preferences.theme;
@@ -199,29 +199,6 @@ export default function App() {
     // Only opening/closing the dialog controls its automatic pause.
   }, [modal]);
 
-  useEffect(() => {
-    if (!collectionOpen) return;
-    const previousFocus = document.activeElement as HTMLElement;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const buttons = () => Array.from(collectionRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []);
-    buttons()[0]?.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); setCollectionOpen(false); }
-      if (event.key !== 'Tab') return;
-      const items = buttons();
-      const first = items[0], last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = previousOverflow;
-      previousFocus.focus();
-    };
-  }, [collectionOpen]);
-
   const notify = useCallback((text: string) => setMessage(text), []);
   const setPreference = <K extends keyof Preferences>(key: K, value: Preferences[K]) =>
     setPreferences(p => ({ ...p, [key]: value }));
@@ -235,7 +212,6 @@ export default function App() {
       setLibraryRevision(r => r + 1);
       setMessage('');
     }
-    setCollectionOpen(false);
   };
 
   const startGeneratedPuzzle = (next: GeneratedPuzzle) => {
@@ -251,7 +227,7 @@ export default function App() {
     if (!generated) return;
     try {
       await navigator.clipboard.writeText(formatPuzzleCode(generated));
-      notify('Puzzle code copied. Paste it in New puzzle to recreate this board.');
+      notify('Puzzle code copied. Paste it in the creation panel to recreate this board.');
     } catch { notify('Select the puzzle code below the grid, then copy it with ⌘/Ctrl C.'); }
   };
 
@@ -288,7 +264,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (view !== 'solo' || modal || collectionOpen || event.isComposing) return;
+      if (view !== 'solo' || modal || event.isComposing) return;
       const target = event.target as HTMLElement;
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable) return;
       if (event.metaKey || event.ctrlKey) {
@@ -324,7 +300,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [view, modal, collectionOpen, dispatch, enterNumber, selected, puzzle, isPlaying, preferences.notesMode]);
+  }, [view, modal, dispatch, enterNumber, selected, puzzle, isPlaying, preferences.notesMode]);
 
   const reset = () => {
     dispatch({ type: 'reset', puzzle });
@@ -333,7 +309,7 @@ export default function App() {
     notify('A fresh start. You’ve got this.');
   };
 
-  const navigate = (next: 'solo' | 'compete' | 'daily') => {
+  const navigate = (next: View) => {
     const url = new URL(window.location.href);
     url.searchParams.delete('room');
     if (next === 'solo') url.searchParams.delete('view');
@@ -341,23 +317,24 @@ export default function App() {
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
     if (next !== 'solo') dispatch({ type: 'pause' });
     setView(next);
+    if (next !== view) window.scrollTo({ top: 0 });
   };
   const accountKey = account.user && !account.user.is_anonymous ? account.user.id : 'guest';
-  if (view === 'daily') return <DailyPage key={accountKey} onSolo={() => navigate('solo')} onCompete={() => navigate('compete')} />;
-  if (view === 'compete') return <CompetitionPage key={accountKey} onSolo={() => navigate('solo')} onDaily={() => navigate('daily')} />;
+  if (view === 'daily') return <DailyPage key={accountKey} onSolo={() => navigate('solo')} onCompete={() => navigate('compete')} onLearn={() => navigate('learn')} />;
+  if (view === 'compete') return <CompetitionPage key={accountKey} onSolo={() => navigate('solo')} onDaily={() => navigate('daily')} onLearn={() => navigate('learn')} />;
 
   return (
-    <div className="app-shell">
-      <header className="site-header with-account" inert={collectionOpen}>
-        <a className="brand" href="#" aria-label={`${APP_NAME} home`} onClick={e => { e.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+    <div className={`app-shell ${view === 'learn' ? 'learn-shell' : 'solo-shell'}`}>
+      <header className="site-header with-account">
+        <a className="brand" href="#" aria-label={`${APP_NAME} home`} onClick={e => { e.preventDefault(); navigate('solo'); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
           <span className="brand-mark"><BrandMark /></span>
           <span>{APP_NAME}<span className="brand-period">.</span></span>
         </a>
         <nav aria-label="Main navigation">
-          <button className="nav-link active" onClick={() => boardRef.current?.querySelector<HTMLButtonElement>(`[data-cell="${selected}"]`)?.focus()}>Solo</button>
+          <button className={`nav-link ${view === 'solo' ? 'active' : ''}`} aria-current={view === 'solo' ? 'page' : undefined} onClick={() => navigate('solo')}>Solo play</button>
           <button className="nav-link" onClick={() => navigate('daily')}>Daily</button>
           <button className="nav-link" onClick={() => navigate('compete')}>Compete</button>
-          <button className="nav-link howto-nav" aria-label="How to play" onClick={() => setModal('help')}><CircleHelp className="nav-help-icon" size={20} /><span>How to play</span></button>
+          <button className={`nav-link ${view === 'learn' ? 'active' : ''}`} aria-current={view === 'learn' ? 'page' : undefined} onClick={() => navigate('learn')}>Learn</button>
         </nav>
         <div className="header-actions">
           <AccountButton />
@@ -367,33 +344,21 @@ export default function App() {
         </div>
       </header>
 
-      <main>
-        <section className="page-intro" aria-label="Welcome" inert={collectionOpen}>
+      {view === 'learn' ? <LearnPage library={library} currentPuzzleId={puzzle.id} generatedPuzzle={generated} onPlay={() => navigate('solo')} onSelectPuzzle={next => { selectPuzzle(next); navigate('solo'); }} /> : <main>
+        <section className="page-intro" aria-label="Welcome">
           <div><div className="eyebrow"><span /> A LITTLE LOGIC. A LITTLE FOCUS.</div><h1>A moment of <em>clarity.</em></h1><p>Fill the spaces. Find your rhythm. One number at a time.</p></div>
-          <div className="intro-actions"><button className="primary-button new-puzzle-launch" onClick={() => setModal('new')}><Sparkles size={17} /> New puzzle</button><div className="collection-count"><span className="count-icon"><Trophy size={22} /></span><div><strong>{completed}<span> / {PUZZLES.length}</span></strong><span>starter puzzles completed</span></div></div></div>
+          <button className="primary-button solo-new-puzzle" onClick={() => { creationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); creationRef.current?.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true }); }}><Sparkles size={17} />New puzzle</button>
         </section>
 
-        <div className="play-layout">
-          <aside ref={collectionRef} className={`collection-panel ${collectionOpen ? 'is-open' : ''}`} aria-label="Puzzle collection" role={collectionOpen ? 'dialog' : undefined} aria-modal={collectionOpen || undefined}>
-            <div className="collection-heading"><div className="eyebrow">THE COLLECTION</div><button className="icon-button mobile-close" aria-label="Close collection" onClick={() => setCollectionOpen(false)}><X size={20} /></button></div>
-            <h2>A good place to start.</h2><p className="muted collection-description">Six little challenges.<br />A bit more possibility in each.</p>
-            <div className="puzzle-list">
-              {library.map(({ puzzle: item, saved }, index) => (
-                <button key={item.id} className={`puzzle-item ${item.id === puzzle.id ? 'is-selected' : ''}`} onClick={() => selectPuzzle(item)} aria-current={item.id === puzzle.id ? 'true' : undefined}>
-                  <span className={`puzzle-number ${saved?.status === 'completed' ? 'is-completed' : ''}`}>{saved?.status === 'completed' ? <Check size={18} /> : String(index + 1).padStart(2, '0')}</span>
-                  <span className="puzzle-item-info"><strong>{item.title}</strong><span>{item.size} × {item.size}<span className="text-dot">·</span>{item.difficulty}</span></span>
-                  {item.id === puzzle.id ? <span className="selected-dot" /> : saved && saved.values.some((v, i) => v && !item.givens[i]) && saved.status !== 'completed' ? <span className="in-progress-dot" title="In progress" /> : <ChevronRight size={15} className="puzzle-chevron" />}
-                </button>
-              ))}
-            </div>
-            {generatedLibrary.length > 0 && <section className="generated-collection" aria-label="Recent generated puzzles"><div className="eyebrow">YOUR RECENT PUZZLES</div><p>The last 12, saved on this device.</p><div className="generated-list">{generatedLibrary.map(({ puzzle: item, saved }) => <button key={item.id} className={`puzzle-item generated-item ${item.id === puzzle.id ? 'is-selected' : ''}`} onClick={() => selectPuzzle(item)} aria-current={item.id === puzzle.id ? 'true' : undefined} aria-label={`Generated ${item.size} by ${item.size} ${item.difficulty}, seed ${item.generation.seed}${saved?.status === 'completed' ? ', completed' : ''}`}><span className={`puzzle-number ${saved?.status === 'completed' ? 'is-completed' : ''}`}>{saved?.status === 'completed' ? <Check size={17} /> : <Sparkles size={16} />}</span><span className="puzzle-item-info"><strong>{item.size} × {item.size}<span className="text-dot">·</span>{item.difficulty}</strong><span title={item.generation.seed}>{item.generation.seed}</span></span>{item.id === puzzle.id && <span className="selected-dot" />}</button>)}</div></section>}
-            <div className="collection-footnote"><Sparkles size={17} /><p>Made for the moment.<br /><span>No rush. Just you and the grid.</span></p></div>
+        <div className="solo-play-layout">
+          <aside className="solo-creation" ref={creationRef} aria-label="Create and revisit puzzles">
+            <section className="solo-creation-card"><NewPuzzleForm initialSize={puzzle.size} initialDifficulty={puzzle.difficulty} onGenerated={startGeneratedPuzzle} variant="inline" /></section>
+            {generatedLibrary.length > 0 && <details className="solo-recent"><summary>Your recent puzzles <span>{generatedLibrary.length}</span></summary><p>The last 12, saved on this device.</p><div className="generated-list">{generatedLibrary.map(({ puzzle: item, saved }) => <button key={item.id} className={`puzzle-item generated-item ${item.id === puzzle.id ? 'is-selected' : ''}`} onClick={() => selectPuzzle(item)} aria-current={item.id === puzzle.id ? 'true' : undefined} aria-label={`Generated ${item.size} by ${item.size} ${item.difficulty}, seed ${item.generation.seed}${saved?.status === 'completed' ? ', completed' : ''}`}><span className={`puzzle-number ${saved?.status === 'completed' ? 'is-completed' : ''}`}>{saved?.status === 'completed' ? <Check size={17} /> : <Sparkles size={16} />}</span><span className="puzzle-item-info"><strong>{item.size} × {item.size}<span className="text-dot">·</span>{item.difficulty}</strong><span title={item.generation.seed}>{item.generation.seed}</span></span>{item.id === puzzle.id && <span className="selected-dot" />}</button>)}</div></details>}
           </aside>
-          {collectionOpen && <button className="collection-backdrop" aria-label="Close collection" onClick={() => setCollectionOpen(false)} />}
 
-          <section className="game-card" aria-label={`${puzzle.title} puzzle`} inert={collectionOpen}>
+          <section className="game-card" aria-label={`${puzzle.title} puzzle`}>
             <div className="game-heading">
-              <div><button className="mobile-collection" onClick={() => setCollectionOpen(true)}>{generated ? 'Your puzzle' : `Puzzle ${String(currentIndex + 1).padStart(2, '0')}`} <ChevronDown size={14} /></button><div className="eyebrow desktop-puzzle-label">{generated ? 'YOUR GENERATED PUZZLE' : `PUZZLE ${String(currentIndex + 1).padStart(2, '0')}`}</div><h2>{puzzle.title}<span className={`difficulty difficulty-${puzzle.difficulty.toLowerCase()}`}>{puzzle.difficulty}</span></h2></div>
+              <div><div className="eyebrow solo-puzzle-label">{generated ? 'YOUR GENERATED PUZZLE' : `PUZZLE ${String(currentIndex + 1).padStart(2, '0')}`}</div><h2>{puzzle.title}<span className={`difficulty difficulty-${puzzle.difficulty.toLowerCase()}`}>{puzzle.difficulty}</span></h2></div>
               <div className="timer"><Clock3 size={16} /><span aria-label={`Elapsed time ${formatTime(session.elapsedMs)}`}>{formatTime(session.elapsedMs)}</span><button className="icon-button pause-button" aria-label={session.status === 'paused' ? 'Resume puzzle' : 'Pause puzzle'} disabled={session.status === 'completed'} onClick={() => dispatch({ type: session.status === 'paused' ? 'resume' : 'pause' })}>{session.status === 'paused' ? <Play size={15} /> : <Pause size={15} />}</button></div>
             </div>
 
@@ -423,7 +388,7 @@ export default function App() {
             <div className="board-caption"><span><span className="clue-sample">1</span> Fixed clue</span><span>{puzzle.size} × {puzzle.size} grid<span className="text-dot">·</span>One solution</span></div>
             {generated && <div className="generated-code"><label htmlFor="puzzle-code">Puzzle code</label><div><input id="puzzle-code" value={formatPuzzleCode(generated)} readOnly onFocus={event => event.currentTarget.select()} aria-label="Puzzle code" /><button className="icon-button" onClick={copyPuzzleCode} aria-label="Copy puzzle code" title="Copy puzzle code"><Copy size={16} /></button></div></div>}
 
-            {session.status === 'completed' ? <div className="completion-panel"><div className="completion-title"><span><Trophy size={22} /></span><div><h3>A lovely bit of logic.</h3><p>Solved in {formatTime(session.elapsedMs)} · {session.hintsUsed} {session.hintsUsed === 1 ? 'hint' : 'hints'} · {session.checksUsed} {session.checksUsed === 1 ? 'check' : 'checks'}</p></div></div><button className="primary-button" onClick={() => generated ? setModal('new') : currentIndex < PUZZLES.length - 1 ? selectPuzzle(PUZZLES[currentIndex + 1]) : setModal('reset')}>{generated ? 'Create another puzzle' : currentIndex < PUZZLES.length - 1 ? 'Try the next puzzle' : 'Play this one again'}<ChevronRight size={17} /></button></div>
+            {session.status === 'completed' ? <div className="completion-panel"><div className="completion-title"><span><Trophy size={22} /></span><div><h3>A lovely bit of logic.</h3><p>Solved in {formatTime(session.elapsedMs)} · {session.hintsUsed} {session.hintsUsed === 1 ? 'hint' : 'hints'} · {session.checksUsed} {session.checksUsed === 1 ? 'check' : 'checks'}</p></div></div><button className="primary-button" onClick={() => { creationRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); creationRef.current?.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true }); }}>Create another puzzle</button></div>
               : <>
                 <div className="number-pad" style={{ '--numbers': puzzle.size } as React.CSSProperties} aria-label="Number pad">
                   {Array.from({ length: puzzle.size }, (_, i) => i + 1).map(n => <button key={n} onClick={event => enterNumber(n, preferences.notesMode || event.shiftKey)} disabled={!isPlaying || Boolean(puzzle.givens[selected])} className={notesMode ? 'note-key' : ''} aria-label={`${notesMode ? 'Toggle note' : 'Enter'} ${n}`}>{n}</button>)}
@@ -438,33 +403,20 @@ export default function App() {
                   <button disabled={!isPlaying} onClick={check}><CheckCheck size={19} /><span>Check</span></button>
                 </div>
               </>}
+            <div className="solo-game-options"><label className="switch-label"><span><strong>Show mistakes</strong><span>Repeats and segment limits</span></span><input type="checkbox" checked={preferences.autoCheck} onChange={e => setPreference('autoCheck', e.target.checked)} /><span className="switch" aria-hidden="true" /></label><span className="solo-progress">{progress}% filled</span></div>
             <div className="game-bottom"><span className={allStorageAvailable ? '' : 'storage-warning'}><span className={`save-dot ${allStorageAvailable ? '' : 'warning'}`} />{allStorageAvailable ? 'Progress saved on this device' : 'Storage unavailable — keep this tab open'}</span><button onClick={() => setModal('reset')}><RotateCcw size={13} /> Restart</button></div>
           </section>
 
-          <aside className="info-column" inert={collectionOpen}>
-            <section className="session-card">
-              <div className="eyebrow">ONE CELL AT A TIME</div><h2>{session.status === 'completed' ? 'Nicely done.' : 'You’re making space.'}</h2><p>{puzzle.description}</p>
-              <div className="progress-label"><span>Your progress</span><strong>{progress}%</strong></div><div className="progress-track" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label="Puzzle progress"><span style={{ width: `${progress}%` }} /></div><p className="progress-detail">{entered} of {editable} empty cells filled</p>
-              <div className="session-divider" />
-              <label className="switch-label"><span><strong>Show mistakes</strong><span>Repeats and segment limits</span></span><input type="checkbox" checked={preferences.autoCheck} onChange={e => setPreference('autoCheck', e.target.checked)} /><span className="switch" aria-hidden="true" /></label>
-              {generated && <div className="generated-rating"><span className="eyebrow">DIFFICULTY ESTIMATE</span><strong>{generated.generation.rating.difficulty}</strong><p>{generated.generation.rating.guesses ? 'This solver needed branching after its logical deductions.' : generated.generation.rating.nakedPairs ? 'Solving needs pairs as well as single placements.' : generated.generation.rating.hiddenSingles ? 'Look for numbers with only one possible home in a segment.' : 'Direct placements can lead you all the way through.'}</p></div>}
-            </section>
-
-            <section className="rules-card"><div className="rules-card-heading"><span className="rules-icon"><Lightbulb size={18} /></span><h2>The little rule.</h2></div><p>Between two thick walls, use every number from <strong>1 to the number of spaces.</strong></p><div className="rule-example" aria-label="A three-cell segment contains one, two, and three in any order"><span>2</span><span>1</span><span>3</span></div><p className="rule-example-caption">3 spaces. 1, 2, 3. Any order.</p><p>It works <strong>across and down.</strong><br />No repeats in a segment.</p><button className="text-button" onClick={() => setModal('help')}>Show me how <CircleHelp size={14} /></button></section>
-
-            <div className="keyboard-hint"><span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> to move</span><span><kbd>1–{puzzle.size}</kbd> to fill <span className="keyboard-separator">/</span> <kbd>N</kbd> or <kbd>Shift</kbd> for notes</span></div>
-          </aside>
         </div>
-      </main>
+      </main>}
 
-      <footer className="site-footer" inert={collectionOpen}><span>Small grids. Good headspace.</span><span>Inspired by One Up, created by Rodolfo Kurchan.<span className="footer-separator">·</span><a href="https://oneuppuzzle.com/" target="_blank" rel="noreferrer">The original game</a></span></footer>
+      <footer className="site-footer"><span>Small grids. Good headspace.</span><span>Inspired by One Up, created by Rodolfo Kurchan.<span className="footer-separator">·</span><a href="https://oneuppuzzle.com/" target="_blank" rel="noreferrer">The original game</a></span></footer>
 
       <div className={`toast ${message ? 'show' : ''}`} role="status" aria-live="polite">{message && <><span className="toast-icon"><Lightbulb size={17} /></span><span>{message}</span><button aria-label="Dismiss message" onClick={() => setMessage('')}><X size={16} /></button></>}</div>
 
-      <dialog ref={dialogRef} className="modal" aria-label={modal === 'new' ? 'New puzzle' : modal === 'reset' ? 'Restart puzzle' : `How to play ${APP_NAME}`} onCancel={() => setModal(null)} onClick={e => { if (e.target === e.currentTarget) setModal(null); }}>
+      <dialog ref={dialogRef} className="modal" aria-label="Restart puzzle" onCancel={() => setModal(null)} onClick={e => { if (e.target === e.currentTarget) setModal(null); }}>
         <div className="modal-inner"><button className="icon-button modal-close" aria-label="Close dialog" onClick={() => setModal(null)}><X size={21} /></button>
-          {modal === 'new' ? <NewPuzzleForm initialSize={puzzle.size} initialDifficulty={puzzle.difficulty} onGenerated={startGeneratedPuzzle} onCancel={() => setModal(null)} /> : modal === 'reset' ? <><span className="modal-symbol"><RotateCcw size={26} /></span><div className="eyebrow">A CLEAN SLATE</div><h2>Start this one again?</h2><p>This clears your entries, notes, and time for <strong>{puzzle.title}</strong>. Your other puzzles stay saved.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setModal(null)}>Keep playing</button><button className="primary-button" onClick={reset}>Restart puzzle</button></div></>
-            : <><span className="modal-symbol"><Grid2X2 size={27} /></span><div className="eyebrow">SIMPLE RULES. HAPPY BRAIN.</div><h2>A little guide to {APP_NAME}.</h2><p>Fill every cell. Each horizontal and vertical segment between thick walls must contain every number from <strong>1 through its length</strong>, exactly once.</p><div className="help-examples"><div><div className="rule-example single"><span>1</span></div><span>One space</span></div><div><div className="rule-example"><span>2</span><span>1</span><span>3</span></div><span>Three spaces</span></div></div><p>Every cell belongs to an across segment <em>and</em> a down segment. Its number must work in both. Underlined numbers are fixed clues.</p><div className="help-shortcuts"><h3>Make yourself at home.</h3><p><Pencil size={17} /><span><strong>Notes</strong> let you pencil in possibilities. Tap N to switch, or hold Shift while pressing a number to add or remove a note.</span></p><p><Lightbulb size={17} /><span><strong>Hint</strong> fills one cell. <strong>Check</strong> marks repeated numbers and numbers that don’t fit their segment. Legal guesses stay unmarked.</span></p><p><Pause size={17} /><span>The clock starts on your first entry. <strong>Pause</strong> hides the board and stops the clock. Switching tabs pauses too.</span></p><p><span className="arrow-icons"><ArrowLeft size={12} /><ArrowUp size={12} /><ArrowDown size={12} /><ArrowRight size={12} /></span><span><strong>Arrow keys</strong> move. Numbers fill. Backspace clears. ⌘/Ctrl Z undoes.</span></p></div><button className="primary-button full-width" onClick={() => setModal(null)}>Got it. Let’s play.</button></>}
+          <span className="modal-symbol"><RotateCcw size={26} /></span><div className="eyebrow">A CLEAN SLATE</div><h2>Start this one again?</h2><p>This clears your entries, notes, and time for <strong>{puzzle.title}</strong>. Your other puzzles stay saved.</p><div className="modal-actions"><button className="secondary-button" onClick={() => setModal(null)}>Keep playing</button><button className="primary-button" onClick={reset}>Restart puzzle</button></div>
         </div>
       </dialog>
     </div>

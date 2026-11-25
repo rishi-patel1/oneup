@@ -30,7 +30,7 @@ function read(key: string) { try { return localStorage.getItem(key); } catch { r
 function forget(key: string) { try { localStorage.removeItem(key); } catch { /* Optional browser cache. */ } }
 function cache(key: string, value: string) { try { localStorage.setItem(key, value); return true; } catch { return false; } }
 
-export default function DailyPage({ onSolo, onCompete }: { onSolo: () => void; onCompete: () => void }) {
+export default function DailyPage({ onSolo, onCompete, onLearn }: { onSolo: () => void; onCompete: () => void; onLearn: () => void }) {
   const account = useAccount();
   const [state, setState] = useState<DailyState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,7 +112,7 @@ export default function DailyPage({ onSolo, onCompete }: { onSolo: () => void; o
   };
 
   return <div className="app-shell daily-shell">
-    <header className="site-header daily-header with-account"><a className="brand" href="#" aria-label={`${APP_NAME} solo play`} onClick={event => { event.preventDefault(); onSolo(); }}><span className="brand-mark"><BrandMark /></span><span>{APP_NAME}<span className="brand-period">.</span></span></a><nav aria-label="Main navigation"><button className="nav-link" onClick={onSolo}>Solo play</button><button className="nav-link active" aria-current="page">Daily</button><button className="nav-link" onClick={onCompete}>Compete</button></nav><AccountButton /></header>
+    <header className="site-header daily-header with-account"><a className="brand" href="#" aria-label={`${APP_NAME} solo play`} onClick={event => { event.preventDefault(); onSolo(); }}><span className="brand-mark"><BrandMark /></span><span>{APP_NAME}<span className="brand-period">.</span></span></a><nav aria-label="Main navigation"><button className="nav-link" onClick={onSolo}>Solo play</button><button className="nav-link active" aria-current="page">Daily</button><button className="nav-link" onClick={onCompete}>Compete</button><button className="nav-link" onClick={onLearn}>Learn</button></nav><AccountButton /></header>
     <main className="daily-main">
       <section className="daily-intro"><div><div className="eyebrow"><CalendarDays size={13} /> THE DAILY MOMENT{state && <span> · {dayLabel(state.date)} UTC</span>}</div><h1>A fresh day.<em> A shared puzzle.</em></h1><p>The same 6 × 6 challenge for everyone. Find your own way through.</p></div>{state && <div className="daily-reset"><span>Next puzzle in</span><strong>{countdown(Date.parse(state.resets_at) - serverNow)}</strong><small>Resets at midnight UTC</small></div>}</section>
       {error && <div className="daily-error daily-page-error" role="alert"><span>{error}</span><button className="secondary-button" onClick={() => refreshRef.current()}><RefreshCw size={15} /> Retry</button></div>}

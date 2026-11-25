@@ -9,7 +9,8 @@ interface Props {
   initialSize: number;
   initialDifficulty: Difficulty;
   onGenerated: (puzzle: GeneratedPuzzle) => void;
-  onCancel: () => void;
+  onCancel?: () => void;
+  variant?: 'dialog' | 'inline';
 }
 
 const LEVELS: { value: Difficulty; description: string }[] = [
@@ -18,7 +19,7 @@ const LEVELS: { value: Difficulty; description: string }[] = [
   { value: 'Hard', description: 'Go a little deeper' },
 ];
 
-export default function NewPuzzleForm({ initialSize, initialDifficulty, onGenerated, onCancel }: Props) {
+export default function NewPuzzleForm({ initialSize, initialDifficulty, onGenerated, onCancel, variant = 'dialog' }: Props) {
   const [size, setSize] = useState(initialSize as GenerationOptions['size']);
   const [difficulty, setDifficulty] = useState(initialDifficulty);
   const [seed, setSeed] = useState('');
@@ -40,7 +41,8 @@ export default function NewPuzzleForm({ initialSize, initialDifficulty, onGenera
   const cancel = () => {
     requestId.current++;
     stopWorker();
-    onCancel();
+    setGenerating(false);
+    onCancel?.();
   };
 
   const generate = (event: React.FormEvent<HTMLFormElement>) => {
@@ -58,7 +60,7 @@ export default function NewPuzzleForm({ initialSize, initialDifficulty, onGenera
         setDifficulty(options.difficulty);
       } else {
         options = { size, difficulty, seed: text ? normalizeSeed(text) : randomSeed() };
-        setSeed(options.seed);
+        if (text) setSeed(options.seed);
       }
       stopWorker();
       const id = ++requestId.current;
@@ -117,6 +119,6 @@ export default function NewPuzzleForm({ initialSize, initialDifficulty, onGenera
     <p className="generation-help" id="seed-help">Leave blank for a fresh puzzle. The same seed, size, and difficulty recreate the same board. Existing progress is kept.</p>
     {error && <p className="generation-error" role="alert" id="generation-error">{error}</p>}
     {generating && <div className="generation-status" role="status"><LoaderCircle size={20} /><div><strong>Making a little possibility.</strong><span>Checking the solution and matching your difficulty…</span></div></div>}
-    <div className="modal-actions"><button className="secondary-button" type="button" onClick={cancel}>{generating ? 'Cancel generation' : 'Maybe later'}</button><button className="primary-button" type="submit" disabled={generating}>{generating ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}{generating ? 'Generating…' : 'Generate puzzle'}</button></div>
+    <div className="modal-actions">{(variant === 'dialog' || generating) && <button className="secondary-button" type="button" onClick={cancel}>{generating ? 'Cancel generation' : 'Maybe later'}</button>}<button className="primary-button" type="submit" disabled={generating}>{generating ? <LoaderCircle className="spin" size={17} /> : <Sparkles size={17} />}{generating ? 'Generating…' : 'Generate puzzle'}</button></div>
   </form>;
 }
