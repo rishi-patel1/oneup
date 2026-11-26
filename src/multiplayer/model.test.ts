@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRoomSnapshotGate, getRoomTiming, isPlayerDone, normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomState, parseSpectatorState, RoomDataError } from './model';
+import { createRoomSnapshotGate, getRoomTiming, isPlayerDone, normalizeChatMessage, normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomChat, parseRoomState, parseSpectatorState, RoomDataError } from './model';
 
 const host = '11111111-1111-4111-8111-111111111111';
 const guest = '22222222-2222-4222-8222-222222222222';
@@ -34,6 +34,95 @@ test('the room model validates public boards and makes independent snapshots', (
   assert.equal(raw.self.values[1], 0);
   assert.equal(raw.puzzle.rightWalls[0], true);
   assert.equal('solution' in parsed.puzzle!, false);
+});
+
+test('spectator and away flags use server state with safe defaults for older responses', () => {
+  const initial = parseRoomState(state());
+  assert.equal(initial.players[0].is_spectator, false);
+  assert.equal(initial.players[0].is_away, false);
+  const left = state(); Object.assign(left.players[1], { active: false });
+  assert.equal(parseRoomState(left).players[1].is_away, true);
+  Object.assign(left.players[1], { active: true, is_away: true });
+  assert.equal(parseRoomState(left).players[1].is_away, true);
+  for (const field of ['is_spectator', 'is_away']) for (const value of [null, 0, 1, 'true']) {
+    const bad = state(); Object.assign(bad.players[1], { [field]: value });
+    assert.throws(() => parseRoomState(bad), RoomDataError);
+  }
+});
+
+test('late spectators receive public clues but no own race entry or solved outcome', () => {
+  const raw = state();
+  Object.assign(raw.players[1], { is_spectator: true, ready: false });
+  // The participant still receives their own private progress when others spectate.
+  assert.ok(parseRoomState(raw, host).self);
+  assert.throws(() => parseRoomState(raw, guest), RoomDataError);
+  Object.assign(raw, { self: null });
+  const observer = parseRoomState(raw, guest);
+  assert.equal(observer.self, null);
+  assert.equal(observer.players[1].is_spectator, true);
+  assert.equal(isPlayerDone(observer.players[1]), false);
+  assert.ok(observer.puzzle);
+  Object.assign(raw.room, { status: 'finished' });
+  Object.assign(raw.players[1], { grid_vote: { size: 6, difficulty: 'Medium' } });
+  assert.deepEqual(parseRoomState(raw, guest).players[1].grid_vote, { size: 6, difficulty: 'Medium' });
+  assert.throws(() => parseRoomState(raw, 'not-a-user'), RoomDataError);
+  assert.throws(() => parseRoomState(raw, '44444444-4444-4444-8444-444444444444'), RoomDataError);
+});
+
+test('spectators cannot carry race progress, readiness, scores, or a lobby participant role', () => {
+  for (const patch of [
+    { ready: true }, { resume_ready: true }, { progress_count: 1 },
+    { finished_at: now, elapsed_ms: 1000 }, { given_up_at: now },
+  ]) {
+    const raw = state();
+    Object.assign(raw, { self: null });
+    Object.assign(raw.players[1], { is_spectator: true, ready: false }, patch);
+    assert.throws(() => parseRoomState(raw, guest), RoomDataError);
+  }
+  const lobby = state();
+  Object.assign(lobby.room, { status: 'lobby', starts_at: null });
+  Object.assign(lobby, { self: null, puzzle: null });
+  Object.assign(lobby.players[1], { is_spectator: true, ready: false });
+  assert.throws(() => parseRoomState(lobby, guest), RoomDataError);
+  Object.assign(lobby.players[1], { is_spectator: false });
+  assert.equal(parseRoomState(lobby, guest).players[1].is_spectator, false);
+});
+
+test('removed participant receipts preserve solved scores and unscored withdrawals separately from live membership', () => {
+  assert.deepEqual(parseRoomState(state()).removed_results, []);
+  const raw = state();
+  const removed = '44444444-4444-4444-8444-444444444444';
+  const gaveUp = '55555555-5555-4555-8555-555555555555';
+  const results = [
+    { user_id: removed, nickname: 'Finished Goose', finished_at: now, given_up_at: null, elapsed_ms: 1234, removed_at: raw.server_now },
+    { user_id: gaveUp, nickname: 'Away Otter', finished_at: null, given_up_at: raw.server_now, elapsed_ms: null, removed_at: raw.server_now },
+  ];
+  Object.assign(raw, { removed_results: results });
+  const parsed = parseRoomState(raw);
+  assert.deepEqual(parsed.removed_results, results);
+  assert.equal(parsed.players.length, 2);
+  parsed.removed_results[0].nickname = 'Changed';
+  assert.equal(results[0].nickname, 'Finished Goose');
+});
+
+test('removed result receipts reject identities, outcome conflicts, future dates, and private payloads', () => {
+  const receipt = {
+    user_id: '44444444-4444-4444-8444-444444444444', nickname: 'Removed Goose',
+    finished_at: now, given_up_at: null, elapsed_ms: 1234, removed_at: state().server_now,
+  };
+  for (const patch of [
+    { user_id: host }, { user_id: 'invalid' }, { nickname: 'A' },
+    { elapsed_ms: -1 }, { finished_at: null, elapsed_ms: null }, { given_up_at: now },
+    { removed_at: null }, { removed_at: '2026-11-19T12:00:02.000Z' }, { removed_at: '2026-11-19T11:59:59.000Z' },
+    { values: [1] }, { notes: [[]] }, { solution: [1] }, { metadata: { seed: 'secret' } },
+  ]) {
+    const raw = state(); Object.assign(raw, { removed_results: [{ ...receipt, ...patch }] });
+    assert.throws(() => parseRoomState(raw), RoomDataError);
+  }
+  for (const removed_results of [null, {}, [receipt, receipt], Array(9).fill(receipt)]) {
+    const raw = state(); Object.assign(raw, { removed_results });
+    assert.throws(() => parseRoomState(raw), RoomDataError);
+  }
 });
 
 test('lobbies and countdowns cannot expose board clues through either public puzzle or private progress', () => {
@@ -261,4 +350,81 @@ test('pause payloads fail closed and older vote snapshots cannot undo a newer pa
   assert.equal(accept(paused),true);assert.equal(accept(base),false);
   const voted=structuredClone(paused);voted.room.pause_version=2;voted.players[0].resume_ready=true;
   assert.equal(accept(voted),true);assert.equal(accept(paused),false);
+});
+
+function chatState() {
+  return {
+    room_id: roomId,
+    server_now: '2026-11-19T12:00:01.000Z',
+    expires_at: '2026-11-20T12:00:01.000Z',
+    messages: [
+      { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', client_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', user_id: host, nickname: 'Host', body: 'Hello, room!', created_at: now },
+      { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', client_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', user_id: guest, nickname: 'Guest', body: 'Ready\nwhen you are.', created_at: '2026-11-19T12:00:00.100Z' },
+    ],
+  };
+}
+
+test('chat text normalizes Unicode and surrounding whitespace while retaining plain text and line breaks', () => {
+  assert.equal(normalizeChatMessage('\u00a0cafe\u0301\n\tsoon\ufeff'), 'café\n\tsoon');
+  assert.equal(normalizeChatMessage('hi\r\nthere'), 'hi\r\nthere');
+  assert.equal(normalizeChatMessage('<script>alert(1)</script>'), '<script>alert(1)</script>');
+  assert.equal(normalizeChatMessage('🪿'.repeat(500)), '🪿'.repeat(500));
+  for (const body of ['', '\n\t ', '🪿'.repeat(501), `hello\u0000`, `hello\u0007`, `hello\u000bworld`, `hello\u007f`]) {
+    assert.throws(() => normalizeChatMessage(body), /message between 1 and 500/);
+  }
+});
+
+test('room chat binds its room and clones bounded server identities and plain text without membership assumptions', () => {
+  const raw = chatState();
+  raw.messages[0].id = raw.messages[0].id.toUpperCase();
+  raw.messages[0].client_id = raw.messages[0].client_id.toUpperCase();
+  raw.messages[1].body = '<b>"solution" is just a word in chat.</b>';
+  const parsed = parseRoomChat(raw, roomId.toUpperCase());
+  assert.equal(parsed.room_id, roomId);
+  assert.equal(parsed.messages[0].id, raw.messages[0].id.toLowerCase());
+  assert.equal(parsed.messages[0].client_id, raw.messages[0].client_id.toLowerCase());
+  assert.equal(parsed.messages[1].user_id, guest);
+  assert.equal(parsed.messages[1].body, raw.messages[1].body);
+  parsed.messages[1].body = 'Changed locally';
+  parsed.messages.pop();
+  assert.equal(raw.messages[1].body, '<b>"solution" is just a word in chat.</b>');
+  assert.equal(raw.messages.length, 2);
+  assert.throws(() => parseRoomChat(raw, host), RoomDataError);
+});
+
+test('chat snapshots reject oversized, duplicate, malformed, or secret-bearing payloads', () => {
+  const base = chatState();
+  const invalids = [
+    { ...base, room_id: 'not-a-room' }, { ...base, expires_at: null }, { ...base, server_now: 'invalid' },
+    { ...base, expires_at: base.server_now }, { ...base, messages: null },
+    { ...base, messages: Array.from({ length: 101 }, () => base.messages[0]) },
+    { ...base, messages: [base.messages[0], base.messages[0]] },
+    { ...base, solution: [] }, { ...base, metadata: { seed: 'private' } },
+  ];
+  for (const invalid of invalids) assert.throws(() => parseRoomChat(invalid, roomId), RoomDataError);
+  for (const patch of [
+    { id: 'invalid' }, { client_id: 'invalid' }, { user_id: 'invalid' }, { nickname: 'x' },
+    { body: '  message  ' }, { body: 'cafe\u0301' }, { body: '' }, { body: 'x'.repeat(501) },
+    { created_at: '2026-11-19T12:00:02Z' }, { body: 1 }, { nickname: 'Guest\u0007' },
+    { seed: 'private' }, { values: [] }, { metadata: { solution: [] } },
+  ]) {
+    assert.throws(() => parseRoomChat({ ...base, messages: [{ ...base.messages[0], ...patch }] }, roomId), RoomDataError);
+  }
+  const duplicateNonce = { ...base.messages[1], client_id: base.messages[0].client_id, user_id: base.messages[0].user_id };
+  assert.throws(() => parseRoomChat({ ...base, messages: [base.messages[0], duplicateNonce] }, roomId), RoomDataError);
+  // Different senders may independently generate the same nonce without sharing an idempotency key.
+  assert.doesNotThrow(() => parseRoomChat({ ...base, messages: [base.messages[0], { ...duplicateNonce, user_id: guest }] }, roomId));
+});
+
+test('chat order and time bounds preserve Postgres microseconds instead of sorting by collapsed millisecond ties', () => {
+  const raw = chatState();
+  raw.messages[0].created_at = '2026-11-19T12:00:00.000100+00:00';
+  raw.messages[1].created_at = '2026-11-19T12:00:00.000900+00:00';
+  [raw.messages[0].id, raw.messages[1].id] = [raw.messages[1].id, raw.messages[0].id];
+  assert.doesNotThrow(() => parseRoomChat(raw, roomId));
+  assert.throws(() => parseRoomChat({ ...raw, messages: [...raw.messages].reverse() }, roomId), RoomDataError);
+  assert.throws(() => parseRoomChat({ ...raw, messages: [raw.messages[0]], server_now: '2026-11-19T12:00:00.000050Z' }, roomId), RoomDataError);
+  assert.throws(() => parseRoomChat({ ...raw, expires_at: '2026-11-19T12:00:00.000050Z', server_now: '2026-11-19T12:00:00.000100Z', messages: [] }, roomId), RoomDataError);
+  raw.messages[1].created_at = raw.messages[0].created_at;
+  assert.throws(() => parseRoomChat(raw, roomId), RoomDataError);
 });

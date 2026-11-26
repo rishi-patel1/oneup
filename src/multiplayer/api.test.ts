@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { createCompetitionApi, explainError } from './api';
+import { createCompetitionApi, explainError, isRoomExpiredError, isRoomRemovedError, isRoomUnavailableError } from './api';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const roomId = '33333333-3333-4333-8333-333333333333';
@@ -291,6 +291,69 @@ test('give up rejects missing or malformed routing before authentication', () =>
   assert.equal(mock.rpcCalls.length, 0);
 });
 
+test('host removal sends only normalized room, target, and current round for server authorization', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  const next = await api.kickRoomPlayer(' abc123 ', ` ${targetId.toUpperCase()} `, roomId.toUpperCase());
+  assert.equal(next.room.code, 'ABC123');
+  assert.deepEqual(mock.rpcCalls, [{ name: 'numora_kick_player', args: { p_code: 'ABC123', p_player_id: targetId, p_round_id: roomId } }]);
+  mock.failWith({ code: 'P0001', message: 'This player is still connected. Only away players can be removed.' });
+  await assert.rejects(api.kickRoomPlayer('ABC123', targetId, roomId), /still connected/);
+  mock.failWith({ code: '22023', message: 'This round has changed. Refresh the room and try again.' });
+  await assert.rejects(api.kickRoomPlayer('ABC123', targetId, roomId), /moved to a new round/);
+});
+
+test('malformed removal routing fails before authentication or a network request', () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  for (const [code, target, round] of [
+    ['ABC', targetId, roomId], ['ABC123', 'not-a-player', roomId], ['ABC123', undefined, roomId],
+    ['ABC123', targetId, 'bad-round'], ['ABC123', targetId, undefined],
+  ]) assert.throws(() => api.kickRoomPlayer(code!, target!, round!));
+  assert.equal(mock.counts().sessionReads, 0);
+  assert.equal(mock.rpcCalls.length, 0);
+});
+
+test('removed-room errors remain distinct after RPC and successful-transaction join decoding', async () => {
+  const message = 'You were removed from this room by the host.';
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  mock.failWith({ code: '42501', message });
+  await assert.rejects(api.getRoom('ABC123'), error => isRoomRemovedError(error) && explainError(error) === message);
+  mock.failWith(null);
+  mock.respondWith({ error: message, code: 'ROOM_REMOVED' });
+  await assert.rejects(api.joinRoom('ABC123', 'Player'), error => isRoomRemovedError(error) && explainError(error) === message);
+  assert.equal(isRoomRemovedError({ code: 'ROOM_REMOVED', message: 'private details should stay hidden' }), true);
+  assert.equal(explainError({ code: 'ROOM_REMOVED', message: 'private details should stay hidden' }), message);
+  assert.equal(isRoomRemovedError({ code: '42501', message: 'Join this room first.' }), false);
+  assert.equal(isRoomRemovedError(new Error('Couldn’t reach this room.')), false);
+});
+
+test('midgame join accepts a spectator role and rejects a private playable grid for that viewer', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  const observerState = {
+    room: { id: roomId, round_id: roomId, code: 'ABC123', host_id: targetId, status: 'racing', size: 5, difficulty: 'Easy', starts_at: now, created_at: now },
+    players: [
+      { user_id: userId, nickname: 'Observer', ready: false, active: true, is_spectator: true, is_away: false, progress_count: 0, finished_at: null, elapsed_ms: null, joined_at: now },
+      { user_id: targetId, nickname: 'Host', ready: true, progress_count: 0, finished_at: null, elapsed_ms: null, joined_at: now },
+    ],
+    puzzle: spectatorPuzzle, self: null, server_now: now,
+  };
+  mock.respondWith(observerState);
+  const joined = await api.joinRoom('ABC123', 'Observer');
+  assert.equal(joined.players[0].is_spectator, true);
+  assert.equal(joined.self, null);
+  assert.deepEqual(mock.rpcCalls[0], { name: 'numora_join_room', args: { p_code: 'ABC123', p_nickname: 'Observer' } });
+  mock.respondWith({ ...observerState, self: { values: [...spectatorPuzzle.givens], notes: Array.from({ length: 25 }, () => []) } });
+  await assert.rejects(api.getRoom('ABC123'), /unexpected data/);
+});
+
+test('removal and observer-gate feedback stays specific without exposing database internals', () => {
+  assert.match(explainError({ code: '42501', message: 'Only the room host can remove an away player.' }), /Only the room host can remove away players/);
+  assert.match(explainError({ code: '22023', message: 'The host cannot remove themselves.' }), /can’t remove yourself/);
+  assert.match(explainError({ code: '22023', message: 'That player has already left this room.' }), /already left this room/);
+  assert.match(explainError({ code: 'P0001', message: 'This player is still connected. Only away players can be removed.' }), /still connected/);
+  assert.match(explainError({ code: '42501', message: 'You joined as a spectator. You can play in the next game.' }), /spectating this round/);
+  assert.match(explainError({ code: '22023', message: 'Choose a player who is solving this round.' }), /Choose a player who is solving/);
+});
+
 test('rematch permission, unfinished race, and stale-round feedback stay actionable', () => {
   assert.match(explainError({message: 'Only the room host can prepare another round.'}), /Only the room host can create the next game/);
   assert.match(explainError({message: 'Wait until everyone has finished before starting another round.'}), /Wait for everyone to finish/);
@@ -315,4 +378,87 @@ test('shared pause and resume votes carry round, pause cycle, and timer version 
   mock.respondWith({room_id:roomId,player_id:targetId,values,notes,updated_at:now,server_now:now});
   await api.getSpectatorState('ABC123',targetId,spectatorPuzzle,undefined,roomId,5);
   for(const call of mock.rpcCalls.slice(3))assert.equal(call.args.p_pause_version,5);
+});
+
+function chatResponse() {
+  return {
+    room_id: roomId, expires_at: '2026-11-20T12:00:00.000Z', server_now: now,
+    messages: [{
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', client_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      user_id: userId, nickname: 'Player', body: 'Hello, room!', created_at: now,
+    }],
+  };
+}
+
+test('chat reads bind the immutable room identity and forward cancellation without round or player claims', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service), controller = new AbortController();
+  mock.respondWith(chatResponse());
+  const state = await api.getRoomChat(' abc123 ', roomId.toUpperCase(), controller.signal);
+  assert.equal(state.messages[0].body, 'Hello, room!');
+  assert.deepEqual(mock.rpcCalls[0], { name: 'numora_get_room_chat', args: { p_code: 'ABC123', p_room_id: roomId } });
+  assert.deepEqual(mock.signals, [controller.signal]);
+  mock.respondWith({ ...chatResponse(), room_id: targetId });
+  await assert.rejects(api.getRoomChat('ABC123', roomId), /unexpected data/);
+});
+
+test('chat sends normalize text and reuse the supplied retry nonce without trusting sender identity or timestamps', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  const clientId = chatResponse().messages[0].client_id;
+  mock.respondWith(chatResponse());
+  await api.sendRoomMessage(' abc123 ', roomId, clientId.toUpperCase(), ' cafe\u0301\n\tsoon ');
+  await api.sendRoomMessage('ABC123', roomId, clientId, 'café\n\tsoon');
+  assert.deepEqual(mock.rpcCalls[0], { name: 'numora_send_room_message', args: {
+    p_code: 'ABC123', p_room_id: roomId, p_client_id: clientId, p_body: 'café\n\tsoon',
+  } });
+  assert.deepEqual(mock.rpcCalls[0], mock.rpcCalls[1]);
+  assert.equal(mock.counts().signups, 1);
+});
+
+test('malformed chat routing, nonces, and text fail before authentication or sending', () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service), clientId = chatResponse().messages[0].client_id;
+  for (const [code, room] of [['ABC', roomId], ['ABC123', 'bad-room']]) {
+    assert.throws(() => api.getRoomChat(code, room));
+    assert.throws(() => api.sendRoomMessage(code, room, clientId, 'Hello'));
+  }
+  assert.throws(() => api.sendRoomMessage('ABC123', roomId, 'bad-client', 'Hello'));
+  for (const body of ['', ' ', '🪿'.repeat(501), 'hello\u0007world']) assert.throws(() => api.sendRoomMessage('ABC123', roomId, clientId, body));
+  assert.equal(mock.counts().sessionReads, 0);
+  assert.equal(mock.rpcCalls.length, 0);
+});
+
+test('room expiration remains distinct through room, chat, join, and function failures', async () => {
+  const message = 'This room has expired. Create or join another room.';
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  mock.failWith({ code: 'P0002', message });
+  for (const operation of [() => api.getRoom('ABC123'), () => api.getRoomChat('ABC123', roomId), () => api.sendRoomMessage('ABC123', roomId, chatResponse().messages[0].client_id, 'Hello')]) {
+    await assert.rejects(operation(), error => isRoomExpiredError(error) && isRoomUnavailableError(error) && !isRoomRemovedError(error) && explainError(error) === message);
+  }
+  mock.failWith(null); mock.respondWith({ error: 'private details', code: 'ROOM_EXPIRED' });
+  await assert.rejects(api.joinRoom('ABC123', 'Player'), error => isRoomExpiredError(error) && explainError(error) === message);
+  mock.service.functions.invoke = async () => ({ data: null, error: { context: new Response(JSON.stringify({ code: 'ROOM_EXPIRED', error: 'private details' }), { status: 409 }) } }) as never;
+  await assert.rejects(api.rematchRoom('ABC123', roomId), error => isRoomExpiredError(error) && isRoomUnavailableError(error));
+  assert.equal(isRoomExpiredError({ code: 'ROOM_EXPIRED', message: 'private details' }), true);
+  assert.equal(isRoomExpiredError({ code: 'P0002', message: 'Other internal lookup failed.' }), false);
+  const authFailure = { status: 401, code: 'session_expired', message: 'Your session has expired.' };
+  assert.equal(isRoomExpiredError(authFailure), false);
+  assert.equal(isRoomUnavailableError(authFailure), false);
+  assert.equal(explainError(authFailure), 'Your connection expired. Refresh the page and reconnect.');
+  assert.equal(isRoomUnavailableError({ code: '42501', message: 'Join this room first.' }), false);
+  assert.equal(isRoomUnavailableError({ code: 'ROOM_REMOVED' }), true);
+});
+
+test('chat validation and retry failures have useful feedback without returning server internals', () => {
+  assert.equal(explainError({ code: '22023', message: 'Messages must contain 1 to 500 characters without control characters.' }), 'Write a message between 1 and 500 characters without control characters.');
+  assert.equal(explainError({ code: '22023', message: 'This message retry does not match the original text.' }), 'This message changed. Send it again as a new message.');
+});
+
+test('chat broadcasts invalidate the chat cache without trusting or exposing a message payload', async () => {
+  const mock = mockClient(), api = createCompetitionApi(mock.service);
+  let roomChanges = 0, chatChanges = 0;
+  const stop = api.watchRoom(roomId, () => { roomChanges++; }, () => {}, () => { chatChanges++; });
+  await api.getUserId(); await Promise.resolve();
+  const signals = mock.handlers.filter(item => item.type === 'broadcast');
+  assert.equal(signals.length, 1);
+  signals[0].callback(); assert.equal(chatChanges, 1); assert.equal(roomChanges, 1);
+  stop(); signals[0].callback(); assert.equal(chatChanges, 1);
 });

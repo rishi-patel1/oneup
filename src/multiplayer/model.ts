@@ -10,6 +10,8 @@ export interface RoomPlayer {
   nickname: string;
   ready: boolean;
   active: boolean;
+  is_spectator: boolean;
+  is_away: boolean;
   resume_ready: boolean;
   progress_count: number;
   finished_at: string | null;
@@ -17,6 +19,16 @@ export interface RoomPlayer {
   grid_vote: GridChoice | null;
   elapsed_ms: number | null;
   joined_at: string;
+}
+
+/** Round receipts retain a removed participant’s outcome without room membership. */
+export interface RoomResult {
+  user_id: string;
+  nickname: string;
+  finished_at: string | null;
+  given_up_at: string | null;
+  elapsed_ms: number | null;
+  removed_at: string;
 }
 
 /** Solved and given-up players no longer take part in the current race. */
@@ -42,6 +54,7 @@ export interface RoomState {
     created_at: string;
   };
   players: RoomPlayer[];
+  removed_results: RoomResult[];
   self: { values: number[]; notes: number[][] } | null;
   puzzle: PublicPuzzle | null;
   server_now: string;
@@ -90,6 +103,23 @@ export interface SpectatorState {
   server_now: string;
 }
 
+/** Chat is scoped to a room, so it continues across rounds without carrying puzzle data. */
+export interface ChatMessage {
+  id: string;
+  client_id: string;
+  user_id: string;
+  nickname: string;
+  body: string;
+  created_at: string;
+}
+
+export interface RoomChatState {
+  room_id: string;
+  expires_at: string;
+  server_now: string;
+  messages: ChatMessage[];
+}
+
 export class CompetitionInputError extends Error {}
 export class RoomDataError extends Error {
   constructor() { super('The room returned unexpected data. Try reconnecting.'); }
@@ -119,6 +149,15 @@ export function normalizeNickname(value: string): string {
   return nickname;
 }
 
+export function normalizeChatMessage(value: string): string {
+  if (typeof value !== 'string') throw new CompetitionInputError('Write a message between 1 and 500 characters.');
+  const body = value.trim().normalize('NFC');
+  if (!body || Array.from(body).length > 500 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(body)) {
+    throw new CompetitionInputError('Write a message between 1 and 500 characters without control characters.');
+  }
+  return body;
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -133,6 +172,44 @@ function date(value: unknown): value is string {
 
 function whole(value: unknown, minimum: number, maximum: number): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+}
+
+/** Preserve Postgres sub-millisecond ordering instead of collapsing it into a UUID tie. */
+function compareDates(left: string, right: string): number {
+  const milliseconds = Date.parse(left) - Date.parse(right);
+  if (milliseconds !== 0) return milliseconds;
+  const fraction = (value: string) => Number((/\.(\d+)(?:z|[+-]\d\d:?\d\d)$/i.exec(value)?.[1] ?? '').slice(3, 9).padEnd(6, '0'));
+  return fraction(left) - fraction(right);
+}
+
+/** Only current-room message text and server identities may cross the chat boundary. */
+export function parseRoomChat(raw: unknown, expectedRoomId: string): RoomChatState {
+  ensure(record(raw) && isUuid(expectedRoomId));
+  ensure(Object.keys(raw).every(key => ['room_id', 'expires_at', 'server_now', 'messages'].includes(key)));
+  ensure(isUuid(raw.room_id) && raw.room_id.toLowerCase() === expectedRoomId.toLowerCase());
+  ensure(date(raw.server_now) && date(raw.expires_at) && compareDates(raw.expires_at, raw.server_now) > 0);
+  ensure(Array.isArray(raw.messages) && raw.messages.length <= 100);
+  const messages: ChatMessage[] = [];
+  const ids = new Set<string>(), nonces = new Set<string>();
+  for (const candidate of raw.messages) {
+    ensure(record(candidate) && Object.keys(candidate).every(key => ['id', 'client_id', 'user_id', 'nickname', 'body', 'created_at'].includes(key)));
+    ensure(isUuid(candidate.id) && isUuid(candidate.client_id) && isUuid(candidate.user_id));
+    ensure(typeof candidate.nickname === 'string' && typeof candidate.body === 'string' && date(candidate.created_at));
+    let nickname: string, body: string;
+    try { nickname = normalizeNickname(candidate.nickname); body = normalizeChatMessage(candidate.body); } catch { throw new RoomDataError(); }
+    ensure(nickname === candidate.nickname && body === candidate.body && compareDates(candidate.created_at, raw.server_now) <= 0);
+    const id = candidate.id.toLowerCase(), clientId = candidate.client_id.toLowerCase(), userId = candidate.user_id.toLowerCase();
+    const nonce = `${userId}:${clientId}`;
+    ensure(!ids.has(id) && !nonces.has(nonce));
+    const previous = messages.at(-1);
+    if (previous) {
+      const order = compareDates(candidate.created_at, previous.created_at);
+      ensure(order > 0 || (order === 0 && id > previous.id));
+    }
+    ids.add(id); nonces.add(nonce);
+    messages.push({ id, client_id: clientId, user_id: userId, nickname, body, created_at: candidate.created_at });
+  }
+  return { room_id: raw.room_id.toLowerCase(), expires_at: raw.expires_at, server_now: raw.server_now, messages };
 }
 
 /** Validate only the shape/domain here. Rule violations remain valid in-progress guesses. */
@@ -169,7 +246,7 @@ export function parseSpectatorState(raw: unknown, playerId: string, puzzle: Publ
 }
 
 /** Fail closed if a server response accidentally contains the hidden answer or seed. */
-export function parseRoomState(raw: unknown): RoomState {
+export function parseRoomState(raw: unknown, viewerId?: string): RoomState {
   ensure(record(raw) && record(raw.room) && Array.isArray(raw.players) && date(raw.server_now));
   const source = raw.room;
   ensure(isUuid(source.id) && isUuid(source.host_id) && typeof source.code === 'string');
@@ -203,11 +280,18 @@ export function parseRoomState(raw: unknown): RoomState {
     ensure(nickname === candidate.nickname && !players.some(player => player.user_id === candidate.user_id));
     ensure(typeof candidate.ready === 'boolean' && whole(candidate.progress_count, 0, count) && date(candidate.joined_at));
     ensure(candidate.active === undefined || typeof candidate.active === 'boolean');
+    ensure(candidate.is_spectator === undefined || typeof candidate.is_spectator === 'boolean');
+    ensure(candidate.is_away === undefined || typeof candidate.is_away === 'boolean');
     ensure(candidate.resume_ready === undefined || typeof candidate.resume_ready === 'boolean');
     ensure((candidate.finished_at === null && candidate.elapsed_ms === null) ||
       (date(candidate.finished_at) && whole(candidate.elapsed_ms, 0, Number.MAX_SAFE_INTEGER)));
     const givenUpAt = candidate.given_up_at === undefined ? null : candidate.given_up_at;
     ensure(givenUpAt === null || (date(givenUpAt) && candidate.finished_at === null && candidate.elapsed_ms === null));
+    const isSpectator = candidate.is_spectator ?? false;
+    if (isSpectator) {
+      ensure(source.status !== 'lobby' && candidate.ready === false && (candidate.resume_ready ?? false) === false);
+      ensure(candidate.progress_count === 0 && candidate.finished_at === null && givenUpAt === null && candidate.elapsed_ms === null);
+    }
     const vote = candidate.grid_vote ?? null;
     let gridVote: GridChoice | null = null;
     if (vote !== null) {
@@ -218,6 +302,7 @@ export function parseRoomState(raw: unknown): RoomState {
     }
     players.push({
       user_id: candidate.user_id, nickname, ready: candidate.ready, active: candidate.active ?? true,
+      is_spectator: isSpectator, is_away: candidate.is_away ?? (candidate.active === false),
       resume_ready: candidate.resume_ready ?? false,
       progress_count: candidate.progress_count, finished_at: candidate.finished_at as string | null,
       given_up_at: givenUpAt,
@@ -226,6 +311,33 @@ export function parseRoomState(raw: unknown): RoomState {
     });
   }
   ensure(players.some(player => player.user_id === source.host_id));
+  if (viewerId !== undefined) {
+    ensure(isUuid(viewerId));
+    const viewer = players.find(player => player.user_id.toLowerCase() === viewerId.toLowerCase());
+    ensure(viewer);
+    ensure(!viewer.is_spectator || raw.self === null);
+  }
+  const removedSource = raw.removed_results === undefined ? [] : raw.removed_results;
+  ensure(Array.isArray(removedSource) && removedSource.length <= 8);
+  const removedResults: RoomResult[] = [];
+  for (const candidate of removedSource) {
+    ensure(record(candidate) && isUuid(candidate.user_id) && typeof candidate.nickname === 'string');
+    ensure(Object.keys(candidate).every(key => ['user_id', 'nickname', 'finished_at', 'given_up_at', 'elapsed_ms', 'removed_at'].includes(key)));
+    const userId = candidate.user_id.toLowerCase();
+    ensure(!players.some(player => player.user_id.toLowerCase() === userId) && !removedResults.some(player => player.user_id === userId));
+    let nickname: string;
+    try { nickname = normalizeNickname(candidate.nickname); } catch { throw new RoomDataError(); }
+    ensure(nickname === candidate.nickname && date(candidate.removed_at) && Date.parse(candidate.removed_at) <= Date.parse(raw.server_now));
+    const solved = date(candidate.finished_at) && candidate.given_up_at === null && whole(candidate.elapsed_ms, 0, Number.MAX_SAFE_INTEGER);
+    const gaveUp = candidate.finished_at === null && date(candidate.given_up_at) && candidate.elapsed_ms === null;
+    ensure(source.status !== 'lobby' && (solved || gaveUp));
+    ensure(Date.parse((solved ? candidate.finished_at : candidate.given_up_at) as string) <= Date.parse(candidate.removed_at));
+    removedResults.push({
+      user_id: userId, nickname, finished_at: candidate.finished_at as string | null,
+      given_up_at: candidate.given_up_at as string | null, elapsed_ms: candidate.elapsed_ms as number | null,
+      removed_at: candidate.removed_at,
+    });
+  }
   const hasStarted = source.status !== 'lobby' && date(source.starts_at) && Date.parse(raw.server_now) >= Date.parse(source.starts_at);
   ensure(hasStarted || (raw.puzzle === null && raw.self === null));
 
@@ -261,6 +373,6 @@ export function parseRoomState(raw: unknown): RoomState {
       paused_at: pausedAt, resumes_at: resumesAt, paused_ms: pausedMs, pause_id: pauseId, pause_version: pauseVersion,
       created_at: source.created_at,
     },
-    players, puzzle, self, server_now: raw.server_now,
+    players, removed_results: removedResults, puzzle, self, server_now: raw.server_now,
   };
 }

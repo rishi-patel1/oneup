@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Check, Clock3, Copy, Eraser, Eye, Flag, LoaderCircle, LogOut, Pause, Pencil, Play, Redo2, RotateCcw, Sparkles, Trophy, Undo2, Users } from 'lucide-react';
+import { Check, Clock3, Copy, Eraser, Eye, Flag, LoaderCircle, LogOut, Pause, Pencil, Play, Redo2, RotateCcw, Sparkles, Trophy, Undo2, UserMinus, Users } from 'lucide-react';
 import { APP_NAME } from '../branding';
 import BrandMark from './BrandMark';
 import AccountButton from './AccountButton';
 import GridChoicePanel from './GridChoicePanel';
+import RoomChat from './RoomChat';
 import type { Difficulty, Puzzle } from '../game/engine';
 import { getMistakes, getSegments, isSolved } from '../game/engine';
 import { createSession, restoreSession, serializeSession, sessionReducer, type Session, type SessionAction } from '../game/session';
 import { createRoomSnapshotGate, getRoomTiming, isPlayerDone } from '../multiplayer/model';
-import { createRoom, explainError, getRoom, getSpectatorState, getUserId, giveUpRoom, isSupabaseConfigured, joinRoom, leaveRoom, pauseRoom, rematchRoom, saveProgress, setReady, setResumeReady, startRoom, submitSolution, voteRoomGrid, watchRoom, type PublicPuzzle, type RoomPlayer, type RoomState, type SpectatorState } from '../multiplayer/api';
+import { createRoom, explainError, getRoom, getSpectatorState, getUserId, giveUpRoom, isRoomUnavailableError, isSupabaseConfigured, joinRoom, kickRoomPlayer, leaveRoom, pauseRoom, rematchRoom, saveProgress, setReady, setResumeReady, startRoom, submitSolution, voteRoomGrid, watchRoom, type PublicPuzzle, type RoomPlayer, type RoomState, type SpectatorState } from '../multiplayer/api';
 import './competition.css';
 
 const ROOM_KEY = 'numora:competition:room';
@@ -43,6 +44,7 @@ export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: 
   const [syncWarning, setSyncWarning] = useState('');
   const [syncRetrying, setSyncRetrying] = useState(false);
   const [presence, setPresence] = useState<string[] | null>(null);
+  const [chatRevision, setChatRevision] = useState(0);
   const [clockOffset, setClockOffset] = useState(0);
   const [now, setNow] = useState(Date.now());
   const codeRef = useRef('');
@@ -66,10 +68,23 @@ export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: 
     codeRef.current = next.room.code;
     snapshotGate.current = createRoomSnapshotGate();
     setPresence(null);
+    setChatRevision(0);
+    setSyncRetrying(false);
     remember(ROOM_KEY, next.room.code);
     updateRoomUrl(next.room.code);
     accept(next);
   }, [accept]);
+  const handleUnavailable = useCallback((cause: unknown, expectedCode: string) => {
+    if (!isRoomUnavailableError(cause)) return false;
+    if (!mounted.current || (codeRef.current && codeRef.current !== expectedCode)) return true;
+    epoch.current++;
+    // Revoke local room acceptance before clearing the view or any pending poll.
+    codeRef.current = ''; snapshotGate.current = createRoomSnapshotGate();
+    forget(ROOM_KEY); updateRoomUrl();
+    setSnapshot(null); setPresence(null); setSyncWarning(''); setSyncRetrying(false);
+    setCode(''); setEntryMode('join'); setBusy(false); setError(explainError(cause));
+    return true;
+  }, []);
 
   useEffect(() => {
     const pendingCode = requestedCode();
@@ -84,28 +99,30 @@ export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: 
         setUserId(id); enter(next);
       } catch (cause) {
         if (!mounted.current || token !== epoch.current) return;
+        if (handleUnavailable(cause, pendingCode)) return;
         setEntryMode('join'); setCode(pendingCode);
         setError(`Join this room to continue. ${explainError(cause)}`);
       } finally { if (mounted.current && token === epoch.current) setBusy(false); }
     })();
     return () => { epoch.current++; };
-  }, [enter]);
+  }, [enter, handleUnavailable]);
 
   const roomId = snapshot?.room.id;
   const roomCode = snapshot?.room.code;
+  const onRoomUnavailable = useCallback((cause: unknown) => roomCode ? handleUnavailable(cause, roomCode) : false, [roomCode, handleUnavailable]);
   useEffect(() => {
     if (!roomId || !roomCode) return;
     let stopped = false, inFlight = false, lastPoll = 0;
     const refresh = async () => {
-      if (stopped || inFlight) return;
+      if (stopped || inFlight || codeRef.current !== roomCode) return;
       inFlight = true;
       lastPoll = Date.now();
       try { const next = await getRoom(roomCode); if (!stopped) accept(next); }
-      catch { if (!stopped) setSyncWarning('Room sync is reconnecting. Your entries stay on this device while we retry.'); }
+      catch (cause) { if (!stopped && !handleUnavailable(cause, roomCode)) setSyncWarning('Room sync is reconnecting. Your entries stay on this device while we retry.'); }
       finally { inFlight = false; }
     };
     let stopWatching = () => {};
-    try { stopWatching = watchRoom(roomId, () => { void refresh(); }, ids => { if (!stopped) setPresence(ids); }); }
+    try { stopWatching = watchRoom(roomId, () => { void refresh(); }, ids => { if (!stopped) setPresence(ids); }, () => { if (!stopped && codeRef.current === roomCode) setChatRevision(value => value + 1); }); }
     catch { setSyncWarning('Live updates are reconnecting. The room will keep checking for changes.'); }
     const interval = window.setInterval(() => {
       const current = latestSnapshot.current;
@@ -114,7 +131,7 @@ export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: 
     }, 500);
     void refresh();
     return () => { stopped = true; window.clearInterval(interval); stopWatching(); };
-  }, [roomId, roomCode, accept]);
+  }, [roomId, roomCode, accept, handleUnavailable]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -136,7 +153,7 @@ export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: 
       const next = mode === 'create' ? await createRoom({ nickname: name, size, difficulty }) : await joinRoom(room, name);
       if (!mounted.current || token !== epoch.current) return;
       remember(NAME_KEY, name); setUserId(id); enter(next);
-    } catch (cause) { if (mounted.current && token === epoch.current) setError(explainError(cause)); }
+    } catch (cause) { if (mounted.current && token === epoch.current && !handleUnavailable(cause, room)) setError(explainError(cause)); }
     finally { if (mounted.current && token === epoch.current) setBusy(false); }
   };
 
@@ -154,17 +171,18 @@ export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: 
       setSize(snapshot.room.size); setDifficulty(snapshot.room.difficulty);
       const previousName = snapshot.players.find(player => player.user_id === userId)?.nickname;
       if (previousName) { setNickname(previousName); remember(NAME_KEY, previousName); }
-      setSnapshot(null); setPresence(null); setSyncWarning('');
+      setSnapshot(null); setPresence(null); setSyncWarning(''); setSyncRetrying(false);
     } catch (cause) { if (mounted.current && token === epoch.current) setError(explainError(cause)); }
     finally { if (mounted.current && token === epoch.current) setBusy(false); }
   };
 
   const retryRoomSync = async () => {
     if (!snapshot || syncRetrying) return;
+    const token = epoch.current, expectedCode = snapshot.room.code;
     setSyncRetrying(true);
-    try { const next = await getRoom(snapshot.room.code); accept(next); }
-    catch (cause) { if (mounted.current) setSyncWarning(explainError(cause)); }
-    finally { if (mounted.current) setSyncRetrying(false); }
+    try { const next = await getRoom(expectedCode); if (mounted.current && token === epoch.current) accept(next); }
+    catch (cause) { if (mounted.current && token === epoch.current && !handleUnavailable(cause, expectedCode)) setSyncWarning(explainError(cause)); }
+    finally { if (mounted.current && token === epoch.current) setSyncRetrying(false); }
   };
 
   return <div className="app-shell arena-shell">
@@ -188,8 +206,9 @@ export default function CompetitionPage({ onSolo, onDaily, onLearn }: { onSolo: 
         </form>
         <p className="arena-entry-caption">Nicknames only. Notes and undo are welcome.<br />Rule conflicts are crossed automatically. Hints sit this one out. Anyone can pause the shared clock.</p>
       </section>
-    </main> : <RoomScreen key={`${snapshot.room.id}:${snapshot.room.round_id}`} snapshot={snapshot} userId={userId} serverNow={now + clockOffset} presence={presence} onSnapshot={accept} onLeave={() => { void exitRoom(); }} leaving={busy} />}
+    </main> : <RoomScreen key={`${snapshot.room.id}:${snapshot.room.round_id}`} snapshot={snapshot} userId={userId} serverNow={now + clockOffset} presence={presence} onSnapshot={accept} onRoomUnavailable={onRoomUnavailable} onLeave={() => { void exitRoom(); }} leaving={busy} />}
     {snapshot && (error || syncWarning) && <div className={`arena-room-message ${error ? 'arena-error' : 'arena-notice'}`} role={error ? 'alert' : 'status'}><span>{error || syncWarning}</span>{syncWarning && !error && <button className="secondary-button arena-sync-retry" disabled={syncRetrying} onClick={() => { void retryRoomSync(); }}>{syncRetrying ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}{syncRetrying ? 'Reconnecting…' : 'Retry room sync'}</button>}</div>}
+    {snapshot && <RoomChat key={snapshot.room.id} roomId={snapshot.room.id} roomCode={snapshot.room.code} userId={userId} active={Boolean(snapshot.players.find(player => player.user_id === userId)?.active)} refreshKey={chatRevision} onRoomUnavailable={onRoomUnavailable} />}
     <footer className="site-footer arena-footer"><span>Small grids. Shared headspace.</span><span>Your official time excludes shared pauses.</span></footer>
   </div>;
 }
@@ -200,11 +219,12 @@ interface RoomProps {
   serverNow: number;
   presence: string[] | null;
   onSnapshot: (state: RoomState) => void;
+  onRoomUnavailable: (cause: unknown) => boolean;
   onLeave: () => void;
   leaving: boolean;
 }
 
-function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave, leaving }: RoomProps) {
+function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onRoomUnavailable, onLeave, leaving }: RoomProps) {
   const { room, players } = snapshot;
   const own = players.find(player => player.user_id === userId);
   // Competitive clients receive no answer. These helpers only need rules and clues.
@@ -217,11 +237,12 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   const [actionBusy, setActionBusy] = useState(false);
   const [submitBusy, setSubmitBusy] = useState(false);
   const [confirmGiveUp, setConfirmGiveUp] = useState(false);
+  const [kickTarget, setKickTarget] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [copyMessage, setCopyMessage] = useState('');
   const [saveStatus, setSaveStatus] = useState<'saved' | 'pending' | 'retrying'>('saved');
   const [draftAvailable, setDraftAvailable] = useState(true);
-  const [spectatingId, setSpectatingId] = useState<string | null>(null);
+  const [spectatingId, setSpectatingId] = useState<string | null>(() => own?.is_spectator ? players.find(player => !player.is_spectator && player.user_id !== userId && !isPlayerDone(player))?.user_id ?? players.find(player => !player.is_spectator && player.user_id !== userId)?.user_id ?? null : null);
   const mounted = useRef(true);
   const revision = useRef(0);
   const dirty = useRef(false);
@@ -229,27 +250,34 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const submittedSignature = useRef('');
-  const latest = useRef({ snapshot, puzzle, own, onSnapshot, serverNow });
-  latest.current = { snapshot, puzzle, own, onSnapshot, serverNow };
+  const latest = useRef({ snapshot, puzzle, own, onSnapshot, onRoomUnavailable, serverNow });
+  latest.current = { snapshot, puzzle, own, onSnapshot, onRoomUnavailable, serverNow };
   const draftKey = room.round_id === room.id ? `numora:competition:draft:${room.id}:${userId}`
     : `numora:competition:draft:${room.id}:${room.round_id}:${userId}`;
   const startTime = room.starts_at ? Date.parse(room.starts_at) : Infinity;
   const countdown = room.status === 'racing' && serverNow < startTime;
   const roomTiming = getRoomTiming(room, serverNow);
   const ownDone = Boolean(own && isPlayerDone(own));
-  const canPlay = Boolean(puzzle && game && room.status === 'racing' && !countdown && !roomTiming.paused && own?.active && !ownDone && !submitBusy && !actionBusy && !confirmGiveUp);
+  const ownSpectator = Boolean(own?.is_spectator);
+  const canSpectate = Boolean(own?.active && (ownSpectator || ownDone));
+  const canPlay = Boolean(puzzle && game && room.status === 'racing' && !countdown && !roomTiming.paused && own?.active && !ownSpectator && !ownDone && !submitBusy && !actionBusy && !confirmGiveUp);
   const effectiveNotes = notesMode || shiftHeld;
   const editableCount = puzzle?.givens.filter(value => !value).length ?? room.size ** 2;
   const segments = useMemo(() => puzzle ? getSegments(puzzle) : { rows: [], columns: [] }, [puzzle]);
   const mistakes = useMemo(() => puzzle && game ? getMistakes(puzzle, game.values) : new Set<number>(), [puzzle, game?.values]);
   const peers = useMemo(() => new Set([...(segments.rows.find(run => run.includes(selected)) ?? []), ...(segments.columns.find(run => run.includes(selected)) ?? [])]), [segments, selected]);
-  const finishedPlayers = [...players].filter(player => player.finished_at !== null).sort((a, b) => (a.elapsed_ms ?? Infinity) - (b.elapsed_ms ?? Infinity));
-  const rankedPlayers = [...finishedPlayers, ...players.filter(player => !isPlayerDone(player)).sort((a, b) => b.progress_count - a.progress_count), ...players.filter(player => player.given_up_at)];
-  const spectatingPlayer = ownDone && !leaving ? players.find(player => player.user_id === spectatingId && player.user_id !== userId) : undefined;
+  const participants = players.filter(player => !player.is_spectator);
+  const finishedPlayers = participants.filter(player => player.finished_at !== null).sort((a, b) => (a.elapsed_ms ?? Infinity) - (b.elapsed_ms ?? Infinity));
+  const allFinishedPlayers = [...finishedPlayers, ...(snapshot.removed_results ?? []).filter(player => player.finished_at !== null)];
+  const rankedPlayers = [...finishedPlayers, ...participants.filter(player => !isPlayerDone(player)).sort((a, b) => b.progress_count - a.progress_count), ...participants.filter(player => player.given_up_at), ...players.filter(player => player.is_spectator)];
+  const spectatingPlayer = canSpectate && !leaving ? participants.find(player => player.user_id === spectatingId && player.user_id !== userId) : undefined;
 
   useEffect(() => {
-    if (!ownDone || (spectatingId && !players.some(player => player.user_id === spectatingId && player.user_id !== userId))) setSpectatingId(null);
-  }, [ownDone, spectatingId, players, userId]);
+    if (!canSpectate || (spectatingId && !players.some(player => !player.is_spectator && player.user_id === spectatingId && player.user_id !== userId))) setSpectatingId(null);
+  }, [canSpectate, spectatingId, players, userId]);
+  useEffect(() => {
+    if (kickTarget && !players.some(player => player.user_id === kickTarget && player.is_away)) setKickTarget(null);
+  }, [kickTarget, players]);
 
   const persistDraft = useCallback((session: Session, isDirty: boolean) => {
     if (isDirty) setDraftAvailable(remember(draftKey, JSON.stringify({ session: serializeSession(session), dirty: true })));
@@ -258,7 +286,7 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; if (retryTimer.current) clearTimeout(retryTimer.current); }; }, []);
 
   useEffect(() => {
-    if (!puzzle || gameRef.current) return;
+    if (!puzzle || ownSpectator || gameRef.current) return;
     let initial = createSession(puzzle);
     if (snapshot.self) initial = restoreSession(puzzle, { ...initial, ...snapshot.self }) ?? initial;
     try {
@@ -270,7 +298,7 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
     gameRef.current = initial; setGame(initial);
     const first = initial.values.findIndex((value, i) => !value && !puzzle.givens[i]);
     setSelected(first >= 0 ? first : 0);
-  }, [puzzle, snapshot.self, draftKey, ownDone]);
+  }, [puzzle, snapshot.self, draftKey, ownDone, ownSpectator]);
 
   useEffect(() => {
     if (!ownDone || !gameRef.current) return;
@@ -282,7 +310,7 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   const flushProgress = useCallback(async () => {
     const current = latest.current;
     const session = gameRef.current;
-    if (!mounted.current || inFlight.current || !dirty.current || !session || !current.puzzle || !current.own?.active || isPlayerDone(current.own) || current.snapshot.room.status !== 'racing' || getRoomTiming(current.snapshot.room, current.serverNow).paused) return;
+    if (!mounted.current || inFlight.current || !dirty.current || !session || !current.puzzle || !current.own?.active || current.own.is_spectator || isPlayerDone(current.own) || current.snapshot.room.status !== 'racing' || getRoomTiming(current.snapshot.room, current.serverNow).paused) return;
     inFlight.current = true;
     const sentRevision = revision.current;
     let failed = false;
@@ -294,7 +322,8 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
         dirty.current = false; setSaveStatus('saved');
         if (gameRef.current) persistDraft(gameRef.current, false);
       }
-    } catch {
+    } catch (cause) {
+      if (current.onRoomUnavailable(cause)) { dirty.current = false; return; }
       failed = true;
       if (mounted.current) setSaveStatus('retrying');
     } finally {
@@ -360,9 +389,9 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
       const next = await submitSolution(room.code, session.values, session.notes, room.round_id, room.pause_version);
       if (!mounted.current) return;
       dirty.current = false; setSaveStatus('saved'); onSnapshot(next);
-    } catch (cause) { if (mounted.current) setError(explainError(cause)); }
+    } catch (cause) { if (mounted.current && !onRoomUnavailable(cause)) setError(explainError(cause)); }
     finally { if (mounted.current) setSubmitBusy(false); }
-  }, [puzzle, canPlay, submitBusy, room.code, room.round_id, room.pause_version, onSnapshot]);
+  }, [puzzle, canPlay, submitBusy, room.code, room.round_id, room.pause_version, onSnapshot, onRoomUnavailable]);
   useEffect(() => { submittedSignature.current = ''; }, [room.pause_version]);
   useEffect(() => {
     if (!puzzle || !game || !canPlay || !isSolved(puzzle, game.values)) return;
@@ -374,17 +403,17 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
     if (actionBusy) return;
     setActionBusy(true); setError('');
     try { const next = await operation(); if (mounted.current) onSnapshot(next); }
-    catch (cause) { if (mounted.current) setError(explainError(cause)); }
+    catch (cause) { if (mounted.current && !onRoomUnavailable(cause)) setError(explainError(cause)); }
     finally { if (mounted.current) setActionBusy(false); }
   };
   const copyInvite = async () => {
     try { await navigator.clipboard.writeText(location.href); setCopyMessage('Invitation copied.'); }
     catch { setCopyMessage('Share the room code or this page’s address.'); }
   };
-  const readyToStart = players.length >= 2 && players.every(player => player.ready);
+  const readyToStart = participants.length >= 2 && participants.every(player => player.ready);
   const elapsed = own?.elapsed_ms ?? roomTiming.elapsed;
-  const resumePlayers = players.filter(player => player.active && !isPlayerDone(player));
-  const canGiveUp = room.status === 'racing' && !countdown && own?.active && !ownDone;
+  const resumePlayers = participants.filter(player => player.active && !isPlayerDone(player));
+  const canGiveUp = room.status === 'racing' && !countdown && own?.active && !ownSpectator && !ownDone;
   const gridPhase = room.status === 'lobby' || room.status === 'finished' ? room.status : null;
   const focusGridChoice = () => {
     const panel = document.getElementById('room-grid-choice');
@@ -393,18 +422,24 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
   };
 
   return <main className="arena-room">
-    <section className="arena-room-top"><div><div className="eyebrow">YOUR SHARED LITTLE CHALLENGE</div><h1>{room.status === 'lobby' ? 'Room for some company.' : own?.given_up_at ? 'Another round awaits.' : own?.finished_at ? 'A lovely finish.' : 'Find your moment.'}</h1><p>{room.size} × {room.size}<span className="text-dot">·</span>{room.difficulty}<span className="text-dot">·</span>{players.length} {players.length === 1 ? 'player' : 'players'}</p></div><div className="arena-room-code"><span>ROOM CODE</span><div><strong>{room.code}</strong><button className="icon-button" aria-label="Copy room invitation" onClick={() => { void copyInvite(); }}><Copy size={18} /></button></div><small role="status">{copyMessage || 'Invite someone into the grid.'}</small></div></section>
+    <section className="arena-room-top"><div><div className="eyebrow">YOUR SHARED LITTLE CHALLENGE</div><h1>{room.status === 'lobby' ? 'Room for some company.' : ownSpectator ? 'A front-row seat.' : own?.given_up_at ? 'Another round awaits.' : own?.finished_at ? 'A lovely finish.' : 'Find your moment.'}</h1><p>{room.size} × {room.size}<span className="text-dot">·</span>{room.difficulty}<span className="text-dot">·</span>{participants.length} {participants.length === 1 ? 'player' : 'players'}{players.length > participants.length && <><span className="text-dot">·</span>{players.length - participants.length} watching</>}</p></div><div className="arena-room-code"><span>ROOM CODE</span><div><strong>{room.code}</strong><button className="icon-button" aria-label="Copy room invitation" onClick={() => { void copyInvite(); }}><Copy size={18} /></button></div><small role="status">{copyMessage || 'Invite someone into the grid.'}</small></div></section>
+    {own && !own.active && <div className="arena-notice arena-rejoin-grid"><span>Rejoin the room to continue.</span><button className="secondary-button" disabled={actionBusy || leaving} onClick={() => { void action(() => joinRoom(room.code, own.nickname)); }}><Users size={16} />Rejoin room</button></div>}
     {gridPhase && <>
-      {own && !own.active && <div className="arena-notice arena-rejoin-grid"><span>Rejoin the room to vote for the next grid.</span><button className="secondary-button" disabled={actionBusy || leaving} onClick={() => { void action(() => joinRoom(room.code, own.nickname)); }}><Users size={16} />Rejoin room</button></div>}
       <GridChoicePanel key={`${room.round_id}:${gridPhase}`} snapshot={snapshot} userId={userId} busy={actionBusy || leaving || submitBusy} onVote={choice => { void action(() => voteRoomGrid(room.code, room.round_id, gridPhase, choice)); }} onApply={choice => { void action(() => rematchRoom(room.code, room.round_id, { ...choice, phase: gridPhase })); }} />
       {error && <p className="arena-error" role="alert">{error}</p>}
     </>}
     <div className="arena-room-layout">
       <section className="arena-play-panel">
         {room.status === 'lobby' ? <div className="arena-lobby"><span className="arena-large-icon"><Users size={32} /></span><div className="eyebrow">A LITTLE ANTICIPATION</div><h2>Good company. Good headspace.</h2><p>Share the room code. Everyone gets the same fresh puzzle after a shared countdown.</p><div className="arena-lobby-rules"><span><Check size={16} /> Notes and undo</span><span><Pause size={16} /> Shared pause, shared resume</span><span><Flag size={16} /> Fastest valid finish</span></div><button className={`primary-button ${own?.ready ? 'arena-ready' : ''}`} disabled={actionBusy || leaving} onClick={() => { void action(() => setReady(room.code, !own?.ready, room.round_id)); }}>{actionBusy ? <LoaderCircle className="spin" size={16} /> : own?.ready ? <Check size={16} /> : <Flag size={16} />}{own?.ready ? 'Ready. Let’s do this.' : 'I’m ready'}</button>{room.host_id === userId ? <><button className="secondary-button arena-start" disabled={!readyToStart || actionBusy || leaving} onClick={() => { void action(() => startRoom(room.code, room.round_id)); }}>Start the challenge</button><p className="arena-lobby-detail">{players.length < 2 ? 'Invite at least one more player to begin.' : !readyToStart ? 'Waiting for everyone to be ready.' : 'Everyone is ready. Start when you are.'}</p></> : <p className="arena-lobby-detail">{own?.ready ? 'Waiting for the host to start the challenge.' : 'Mark yourself ready when you’re settled in.'}</p>}</div>
-          : roomTiming.paused ? <section className="arena-paused" aria-label="Competition paused" aria-live="polite"><span className="arena-large-icon"><Pause size={30} /></span><div className="eyebrow">A SHARED BREATHER</div><h2>{roomTiming.resuming ? 'Starting together again.' : 'The room is paused.'}</h2><p>The clock is stopped and everyone’s grid is hidden.</p><div className="arena-paused-time"><Clock3 size={17} />{own?.given_up_at ? 'Did not finish' : time(elapsed)}</div>{roomTiming.resuming ? <><strong className="arena-resume-countdown">{roomTiming.resumeSeconds}</strong><p>Everyone is ready. Play resumes together after three seconds.</p></> : <p>Every player still solving must be ready before the three-second countdown starts.</p>}<ul className="arena-resume-list" aria-label="Players ready to resume">{resumePlayers.map(player => <li key={player.user_id}><span>{player.nickname}{player.user_id === userId ? ' (you)' : ''}</span><span>{player.resume_ready ? <Check size={16} /> : <Clock3 size={16} />}{player.resume_ready ? 'Ready' : 'Waiting'}</span></li>)}</ul>{own?.active && !ownDone && room.pause_id && <button className={own.resume_ready ? 'secondary-button' : 'primary-button'} disabled={actionBusy || leaving} onClick={() => { void action(() => setResumeReady(room.code, room.round_id, room.pause_id!, !own.resume_ready)); }}>{actionBusy ? <LoaderCircle className="spin" size={17} /> : own.resume_ready ? <Pause size={17} /> : <Play size={17} />}{own.resume_ready ? 'Stay paused' : 'Ready to resume'}</button>}{own && !own.active && <button className="primary-button" disabled={actionBusy || leaving} onClick={() => { void action(() => joinRoom(room.code, own.nickname)); }}><Users size={17} />Rejoin room</button>}<small>{ownDone ? 'Your round is over. Only players still solving need to ready up.' : own?.resume_ready ? 'You can choose Stay paused if you need more time.' : 'Your entries and pencil notes are kept for you.'}</small></section>
+          : roomTiming.paused ? <section className="arena-paused" aria-label="Competition paused" aria-live="polite"><span className="arena-large-icon"><Pause size={30} /></span><div className="eyebrow">A SHARED BREATHER</div><h2>{roomTiming.resuming ? 'Starting together again.' : 'The room is paused.'}</h2><p>The clock is stopped and everyone’s grid is hidden.</p><div className="arena-paused-time"><Clock3 size={17} />{own?.given_up_at ? 'Did not finish' : time(elapsed)}</div>{roomTiming.resuming ? <><strong className="arena-resume-countdown">{roomTiming.resumeSeconds}</strong><p>Everyone is ready. Play resumes together after three seconds.</p></> : <p>Every player still solving must be ready before the three-second countdown starts.</p>}<ul className="arena-resume-list" aria-label="Players ready to resume">{resumePlayers.map(player => <li key={player.user_id}><span>{player.nickname}{player.user_id === userId ? ' (you)' : ''}</span><span>{player.resume_ready ? <Check size={16} /> : <Clock3 size={16} />}{player.resume_ready ? 'Ready' : 'Waiting'}</span></li>)}</ul>{own?.active && !ownSpectator && !ownDone && room.pause_id && <button className={own.resume_ready ? 'secondary-button' : 'primary-button'} disabled={actionBusy || leaving} onClick={() => { void action(() => setResumeReady(room.code, room.round_id, room.pause_id!, !own.resume_ready)); }}>{actionBusy ? <LoaderCircle className="spin" size={17} /> : own.resume_ready ? <Pause size={17} /> : <Play size={17} />}{own.resume_ready ? 'Stay paused' : 'Ready to resume'}</button>}<small>{ownSpectator ? 'You’re watching this round. Only players still solving need to ready up.' : ownDone ? 'Your round is over. Only players still solving need to ready up.' : own?.resume_ready ? 'You can choose Stay paused if you need more time.' : 'Your entries and pencil notes are kept for you.'}</small></section>
+          : ownSpectator ? <div className="arena-observer">
+              <div className="arena-observer-heading"><span className="arena-large-icon"><Eye size={29} /></span><div><div className="eyebrow">WATCH THIS ROUND. PLAY THE NEXT.</div><h2>{spectatingPlayer ? `Watching ${spectatingPlayer.nickname}` : 'You’re in for the next game.'}</h2><p>You joined after this round started. Spectate a player while you wait, then join the next game in this room.</p></div></div>
+              {countdown || !snapshot.puzzle ? <div className="arena-observer-wait" role="status"><Clock3 size={24} /><p>{countdown ? `The shared start is in ${Math.max(1, Math.ceil((startTime - serverNow) / 1000))} seconds.` : 'The room is opening the live grids.'} Spectating begins when the puzzle opens.</p></div> : spectatingPlayer ? <SpectatorBoard key={spectatingPlayer.user_id} roomCode={room.code} roomId={room.id} roundId={room.round_id} pauseVersion={room.pause_version} player={spectatingPlayer} puzzle={snapshot.puzzle} refreshKey={snapshot.server_now} onBack={() => setSpectatingId(null)} backLabel="Choose a player" onRoomUnavailable={onRoomUnavailable} /> : <div className="arena-observer-wait"><Eye size={27} /><h3>Choose a player to watch.</h3><p>Use Spectate beside a player to see their entries and pencil notes.</p></div>}
+              <p className="arena-observer-next">{room.status === 'finished' ? 'This round is finished. Vote for the next grid above; you’ll be a player when the host creates the next game.' : 'You’re watching only this round. You’ll get your own grid when the host creates the next game.'}</p>
+              {room.status === 'finished' && <button className="secondary-button arena-new-game" disabled={leaving || actionBusy} onClick={focusGridChoice}>Vote for next grid</button>}
+            </div>
           : countdown || !puzzle || !game ? <div className="arena-countdown" aria-live="polite"><span className="eyebrow">SAME GRID. SAME START.</span><strong>{countdown ? Math.max(1, Math.ceil((startTime - serverNow) / 1000)) : <LoaderCircle className="spin" size={43} />}</strong><h2>{countdown ? 'A little focus…' : 'Opening your grid…'}</h2><p>{countdown ? 'Your puzzle appears when the countdown ends.' : 'Your official clock is running. The room is syncing your puzzle.'}</p></div>
-            : <div className="arena-game"><div className="arena-game-top"><div><span className="eyebrow">{spectatingPlayer ? 'POST-FINISH SPECTATOR' : 'YOUR SIDE OF THE CHALLENGE'}</span><h2>{spectatingPlayer ? `Spectating ${spectatingPlayer.nickname}` : own?.nickname ?? 'Your grid'}</h2></div><div className="arena-clock-controls"><div className="arena-timer"><Clock3 size={17} /><span>{spectatingPlayer && <small className="arena-own-time-label">{own?.given_up_at ? 'Your result' : 'Your time'}</small>}{own?.given_up_at ? 'DNF' : time(elapsed)}</span></div>{!ownDone && own?.active && <button className="arena-pause-button" aria-label="Pause for everyone" disabled={actionBusy || leaving || submitBusy} onClick={() => { void action(() => pauseRoom(room.code, room.round_id, room.pause_version)); }}><Pause size={16} /><span>Pause</span></button>}</div></div>{spectatingPlayer && snapshot.puzzle ? <SpectatorBoard key={spectatingPlayer.user_id} roomCode={room.code} roomId={room.id} roundId={room.round_id} pauseVersion={room.pause_version} player={spectatingPlayer} puzzle={snapshot.puzzle} refreshKey={snapshot.server_now} onBack={() => setSpectatingId(null)} /> : <><div className={`puzzle-board arena-board ${own?.finished_at ? 'is-solved' : ''}`} ref={boardRef} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${puzzle.size} by ${puzzle.size} competition grid`} aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
+            : <div className="arena-game"><div className="arena-game-top"><div><span className="eyebrow">{spectatingPlayer ? 'POST-FINISH SPECTATOR' : 'YOUR SIDE OF THE CHALLENGE'}</span><h2>{spectatingPlayer ? `Spectating ${spectatingPlayer.nickname}` : own?.nickname ?? 'Your grid'}</h2></div><div className="arena-clock-controls"><div className="arena-timer"><Clock3 size={17} /><span>{spectatingPlayer && <small className="arena-own-time-label">{own?.given_up_at ? 'Your result' : 'Your time'}</small>}{own?.given_up_at ? 'DNF' : time(elapsed)}</span></div>{!ownDone && own?.active && <button className="arena-pause-button" aria-label="Pause for everyone" disabled={actionBusy || leaving || submitBusy} onClick={() => { void action(() => pauseRoom(room.code, room.round_id, room.pause_version)); }}><Pause size={16} /><span>Pause</span></button>}</div></div>{spectatingPlayer && snapshot.puzzle ? <SpectatorBoard key={spectatingPlayer.user_id} roomCode={room.code} roomId={room.id} roundId={room.round_id} pauseVersion={room.pause_version} player={spectatingPlayer} puzzle={snapshot.puzzle} refreshKey={snapshot.server_now} onBack={() => setSpectatingId(null)} onRoomUnavailable={onRoomUnavailable} /> : <><div className={`puzzle-board arena-board ${own?.finished_at ? 'is-solved' : ''}`} ref={boardRef} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${puzzle.size} by ${puzzle.size} competition grid`} aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>{Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {
               const index = row * puzzle.size + column, given = Boolean(puzzle.givens[index]), value = game.values[index];
               const wrong = mistakes.has(index);
               const across = segments.rows.find(run => run.includes(index))!, down = segments.columns.find(run => run.includes(index))!;
@@ -415,11 +450,23 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onLeave
       </section>
       <aside className="arena-players" aria-label="Players and results"><div className="arena-players-heading"><span className="eyebrow">{room.status === 'lobby' ? 'THE COMPANY' : room.status === 'finished' ? 'THE RESULTS' : 'THE CHALLENGE'}</span><span>{players.length} / 8</span></div><h2>{room.status === 'lobby' ? 'Make yourself at home.' : 'One number at a time.'}</h2><div className="arena-player-list">{rankedPlayers.map(player => {
         const finished = player.finished_at !== null;
-        const rank = finished ? 1 + finishedPlayers.filter(other => (other.elapsed_ms ?? Infinity) < (player.elapsed_ms ?? Infinity)).length : null;
+        const rank = finished ? 1 + allFinishedPlayers.filter(other => (other.elapsed_ms ?? Infinity) < (player.elapsed_ms ?? Infinity)).length : null;
         const online = presence === null ? null : player.user_id === userId || presence.includes(player.user_id);
+        const away = player.is_away || !player.active;
+        const canKick = room.host_id === userId && own?.active && player.user_id !== userId && away;
         const percent = Math.min(100, Math.round(player.progress_count / Math.max(1, editableCount) * 100));
-        return <div className={`arena-player ${player.user_id === userId ? 'is-you' : ''}`} key={player.user_id}><div className="arena-player-line"><span className={`arena-player-avatar ${rank === 1 ? 'winner' : ''}`}>{rank === 1 ? <Trophy size={18} /> : rank ?? player.nickname.slice(0, 1).toUpperCase()}</span><span className="arena-player-name"><strong>{player.nickname}{player.user_id === userId && <small>you</small>}</strong><span>{room.status === 'lobby' ? player.ready ? 'Ready to go' : 'Getting settled' : finished ? `Finished in ${time(player.elapsed_ms ?? 0)}` : player.given_up_at ? 'Did not finish' : roomTiming.paused ? player.resume_ready ? 'Ready to resume' : player.active ? 'Paused' : 'Left room' : countdown ? 'Starting together' : `${percent}% filled`}{player.user_id === room.host_id && <span className="arena-host-label"> · host</span>}</span></span>{room.status === 'lobby' ? player.ready ? <Check className="arena-ready-check" size={18} /> : online === false ? <span className="arena-away">away</span> : null : finished ? <span className="arena-rank">#{rank}</span> : online === false ? <span className="arena-away">away</span> : null}</div>{room.status !== 'lobby' && !countdown && <div className="progress-track" role="progressbar" aria-label={`${player.nickname} progress`} aria-valuenow={finished ? 100 : percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${finished ? 100 : percent}%` }} /></div>}{ownDone && player.user_id !== userId && <button className="arena-spectate-button" aria-pressed={spectatingPlayer?.user_id === player.user_id} disabled={leaving || roomTiming.paused} onClick={() => { setSpectatingId(player.user_id); setError(''); }}><Eye size={15} /><span>Spectate {player.nickname}</span></button>}</div>;
-      })}</div><div className="arena-fair-play"><Flag size={17} /><p>Same puzzle. Shared start.<br /><span>Notes and undo are allowed. A pause stops the clock for everyone; only players still solving must be ready to resume.</span></p></div><button className="arena-leave" disabled={leaving || actionBusy || submitBusy} onClick={onLeave}><LogOut size={15} />{leaving ? 'Leaving…' : 'Leave room'}</button></aside>
+        return <div className={`arena-player ${player.user_id === userId ? 'is-you' : ''}`} key={player.user_id}>
+          <div className="arena-player-line"><span className={`arena-player-avatar ${rank === 1 ? 'winner' : ''}`}>{player.is_spectator ? <Eye size={17} /> : rank === 1 ? <Trophy size={18} /> : rank ?? player.nickname.slice(0, 1).toUpperCase()}</span><span className="arena-player-name"><strong>{player.nickname}{player.user_id === userId && <small>you</small>}</strong><span>{player.is_spectator ? 'Spectating · plays next round' : room.status === 'lobby' ? player.ready ? 'Ready to go' : 'Getting settled' : finished ? `Finished in ${time(player.elapsed_ms ?? 0)}` : player.given_up_at ? 'Did not finish' : roomTiming.paused ? player.resume_ready ? 'Ready to resume' : player.active ? 'Paused' : 'Left room' : countdown ? 'Starting together' : `${percent}% filled`}{player.user_id === room.host_id && <span className="arena-host-label"> · host</span>}</span></span><span className="arena-player-status">{finished ? <span className="arena-rank">#{rank}</span> : room.status === 'lobby' && player.ready ? <Check className="arena-ready-check" size={18} /> : null}{away ? <span className="arena-away">away</span> : online === false ? <span className="arena-away">reconnecting</span> : null}</span></div>
+          {!player.is_spectator && room.status !== 'lobby' && !countdown && <div className="progress-track" role="progressbar" aria-label={`${player.nickname} progress`} aria-valuenow={finished ? 100 : percent} aria-valuemin={0} aria-valuemax={100}><span style={{ width: `${finished ? 100 : percent}%` }} /></div>}
+          {canSpectate && !player.is_spectator && player.user_id !== userId && <button className="arena-spectate-button" aria-pressed={spectatingPlayer?.user_id === player.user_id} disabled={leaving || roomTiming.paused || countdown || !snapshot.puzzle} onClick={() => { setSpectatingId(player.user_id); setError(''); }}><Eye size={15} /><span>Spectate {player.nickname}</span></button>}
+          {canKick && (kickTarget === player.user_id ? <section className="arena-kick-confirm" aria-label={`Confirm removing ${player.nickname}`}><p>Remove {player.nickname} from this room? They can’t rejoin this room. Their recorded result is kept.</p><div><button className="secondary-button" disabled={actionBusy || leaving} onClick={() => setKickTarget(null)}>Keep player</button><button className="secondary-button" disabled={actionBusy || leaving} onClick={() => { void action(() => kickRoomPlayer(room.code, player.user_id, room.round_id)); }}><UserMinus size={14} />Remove player</button></div></section> : <button className="arena-kick-button" disabled={actionBusy || leaving || submitBusy} aria-label={`Remove ${player.nickname} from room`} onClick={() => setKickTarget(player.user_id)}><UserMinus size={14} />Remove away player</button>)}
+        </div>;
+      })}</div>
+      {(snapshot.removed_results ?? []).length > 0 && <section className="arena-removed-results" aria-label="Removed players’ results"><h3>Removed this round</h3>{snapshot.removed_results.map(player => {
+        const rank = player.finished_at ? 1 + allFinishedPlayers.filter(other => (other.elapsed_ms ?? Infinity) < (player.elapsed_ms ?? Infinity)).length : null;
+        return <div key={player.user_id}><strong>{player.nickname}</strong><span>{rank ? `#${rank} · Finished in ${time(player.elapsed_ms ?? 0)}` : 'Did not finish'} · removed</span></div>;
+      })}</section>}
+      <div className="arena-fair-play"><Flag size={17} /><p>Same puzzle. Shared start.<br /><span>Only players still solving ready up after a pause. Midgame arrivals watch this round and play the next. The host can remove players who leave or are away for a minute.</span></p></div><button className="arena-leave" disabled={leaving || actionBusy || submitBusy} onClick={onLeave}><LogOut size={15} />{leaving ? 'Leaving…' : 'Leave room'}</button></aside>
     </div>
   </main>;
 }
@@ -433,10 +480,12 @@ interface SpectatorBoardProps {
   puzzle: PublicPuzzle;
   refreshKey: string;
   onBack: () => void;
+  backLabel?: string;
+  onRoomUnavailable: (cause: unknown) => boolean;
 }
 
-/** Opponent progress is held only in this mounted, post-finish view. */
-function SpectatorBoard({ roomCode, roomId, roundId, pauseVersion, player, puzzle, refreshKey, onBack }: SpectatorBoardProps) {
+/** Opponent progress stays inside this mounted, server-authorized read-only view. */
+function SpectatorBoard({ roomCode, roomId, roundId, pauseVersion, player, puzzle, refreshKey, onBack, backLabel = 'Back to my grid', onRoomUnavailable }: SpectatorBoardProps) {
   const [progress, setProgress] = useState<SpectatorState | null>(null);
   const mistakes = useMemo(() => progress ? getMistakes({ ...puzzle, solution: [] }, progress.values) : new Set<number>(), [puzzle, progress?.values]);
   const [error, setError] = useState('');
@@ -469,7 +518,7 @@ function SpectatorBoard({ roomCode, roomId, roundId, pauseVersion, player, puzzl
         setLastSynced(Date.now());
         setError('');
       } catch (cause) {
-        if (!stopped) setError(timedOut ? 'The live view lost its connection. We’ll keep trying to reconnect.' : explainError(cause));
+        if (!stopped && !onRoomUnavailable(cause)) setError(timedOut ? 'The live view lost its connection. We’ll keep trying to reconnect.' : explainError(cause));
       } finally {
         clearTimeout(timeout);
         inFlight = false;
@@ -497,7 +546,7 @@ function SpectatorBoard({ roomCode, roomId, roundId, pauseVersion, player, puzzl
   const lastSyncText = lastSynced === null ? '' : new Date(lastSynced).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
   return <section className="arena-spectator" aria-label={`Spectating ${player.nickname}`}>
-    <div className="arena-spectator-toolbar"><div className="arena-spectator-badges"><span className={`arena-live-badge ${live ? 'is-live' : ''}`}><span />{live ? 'Live' : reconnecting ? 'Reconnecting' : fetching ? 'Connecting' : 'Disconnected'}</span><span className="arena-readonly-badge"><Eye size={13} /> Read-only</span></div><button className="secondary-button arena-back-to-grid" onClick={onBack}>Back to my grid</button></div>
+    <div className="arena-spectator-toolbar"><div className="arena-spectator-badges"><span className={`arena-live-badge ${live ? 'is-live' : ''}`}><span />{live ? 'Live' : reconnecting ? 'Reconnecting' : fetching ? 'Connecting' : 'Disconnected'}</span><span className="arena-readonly-badge"><Eye size={13} /> Read-only</span></div><button className="secondary-button arena-back-to-grid" onClick={onBack}>{backLabel}</button></div>
     <p className="arena-spectator-caption">{player.finished_at ? `${player.nickname} finished in ${time(player.elapsed_ms ?? 0)}.` : player.given_up_at ? `${player.nickname} gave up this round.` : `${player.nickname} is working through the grid.`} Their entries and pencil notes appear here.</p>
     {progress ? <><div className={`puzzle-board arena-board arena-spectator-board ${reconnecting ? 'is-reconnecting' : ''}`} style={{ '--size': puzzle.size } as React.CSSProperties} role="grid" aria-label={`${player.nickname}’s ${puzzle.size} by ${puzzle.size} grid, read-only`} aria-readonly="true" aria-rowcount={puzzle.size} aria-colcount={puzzle.size}>
       {Array.from({ length: puzzle.size }, (_, row) => <div className="board-row" role="row" key={row}>{Array.from({ length: puzzle.size }, (_, column) => {

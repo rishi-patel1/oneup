@@ -7,7 +7,7 @@ import { getConflicts } from '../../src/game/engine';
 
 type State = {
   room: { id: string; code: string; host_id: string; status: string; starts_at: string | null };
-  players: { user_id: string; ready: boolean; progress_count: number; finished_at: string | null; elapsed_ms: number | null }[];
+  players: { user_id: string; is_spectator: boolean; ready: boolean; progress_count: number; finished_at: string | null; elapsed_ms: number | null }[];
   self: { values: number[]; notes: number[][] } | null;
   puzzle: Record<string, unknown> | null;
   server_now: string;
@@ -111,8 +111,10 @@ test('competition SQL: authorization, hidden boards, race rules, persistence, an
       assert.equal(started.puzzle, null);
       assert.equal(started.self, null);
       await assert.rejects(user(GUEST, () => db.query('select public.numora_save_progress($1,$2::int[],$3::jsonb)', [code, puzzle.givens, JSON.stringify(notes)])), /not started/);
-      const late = await user(LATE, () => db.query<{ data: { error: string } }>('select public.numora_join_room($1,$2) as data', [code, 'Late']));
-      assert.match(late.rows[0].data.error, /already started/);
+      const late = await user(LATE, () => db.query<{ data: State }>('select public.numora_join_room($1,$2) as data', [code, 'Late']));
+      assert.equal(late.rows[0].data.players.find(p => p.user_id === LATE)?.is_spectator, true);
+      assert.equal(late.rows[0].data.self, null);
+      assert.equal(late.rows[0].data.puzzle, null);
     });
 
     await t.test('after start each player receives a safe board and only their own entries', async () => {
@@ -147,7 +149,7 @@ test('competition SQL: authorization, hidden boards, race rules, persistence, an
       await assert.rejects(user(HOST, () => db.query('select public.numora_save_progress($1,$2::int[],$3::jsonb)', [code, [[1,2],[3,4]], JSON.stringify(notes)])), /preserve the fixed clues/);
     });
 
-    await t.test('server validates complete segment rules, freezes first finish, and completes only after every player', async () => {
+    await t.test('server validates complete segment rules, freezes first finish, and completes only after every racer', async () => {
       await assert.rejects(user(HOST, () => db.query('select public.numora_submit_solution($1,$2::int[],$3::jsonb)', [code, puzzle.givens, JSON.stringify(notes)])), /not complete/);
       const invalid = [...puzzle.solution];
       const first = puzzle.givens.findIndex(value => !value);
@@ -163,7 +165,8 @@ test('competition SQL: authorization, hidden boards, race rules, persistence, an
       assert.equal(repeat.players.find(p => p.user_id === HOST)?.finished_at, finish.finished_at);
       const allFinished = (await user(GUEST, () => db.query<{ data: State }>('select public.numora_submit_solution($1,$2::int[],$3::jsonb) as data', [code, puzzle.solution, JSON.stringify(notes)]))).rows[0].data;
       assert.equal(allFinished.room.status, 'finished');
-      assert.ok(allFinished.players.every(p => p.finished_at && p.elapsed_ms !== null));
+      assert.ok(allFinished.players.filter(p => !p.is_spectator).every(p => p.finished_at && p.elapsed_ms !== null));
+      assert.equal(allFinished.players.find(p => p.user_id === LATE)?.finished_at, null);
     });
 
     await t.test('leaving a started race preserves entries, results, and the original clock for rejoin', async () => {
