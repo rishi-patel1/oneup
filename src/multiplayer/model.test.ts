@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRoomSnapshotGate, getRoomTiming, isPlayerDone, normalizeChatMessage, normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomChat, parseRoomState, parseSpectatorState, RoomDataError } from './model';
+import { createRoomSnapshotGate, getRoomTiming, isPlayerDone, normalizeChatMessage, normalizeNickname, normalizeProgress, normalizeRoomCode, parseRoomChat, parseRoomState, parseSpectatorState, RoomDataError, type PreviousRound } from './model';
 
 const host = '11111111-1111-4111-8111-111111111111';
 const guest = '22222222-2222-4222-8222-222222222222';
@@ -14,6 +14,18 @@ function state() {
     self: { values: [1, ...Array<number>(24).fill(0)], notes: Array.from({ length: 25 }, () => [] as number[]) },
     puzzle: { id: `match-${roomId}`, title: 'A shared challenge', description: 'Every cell counts.', size: 5, difficulty: 'Easy' as const, givens: [1, ...Array<number>(24).fill(0)], rightWalls: Array<boolean>(25).fill(true), bottomWalls: Array<boolean>(25).fill(true) },
     server_now: '2026-11-19T12:00:01.000Z',
+  };
+}
+
+function previousRound(): PreviousRound {
+  return {
+    round_id: '99999999-9999-4999-8999-999999999999', size: 6, difficulty: 'Medium',
+    starts_at: '2026-11-19T11:55:00.000Z', finished_at: '2026-11-19T11:59:00.000Z',
+    results: [
+      { user_id: host, nickname: 'Host', finished_at: '2026-11-19T11:57:00.000Z', given_up_at: null, elapsed_ms: 120000 },
+      { user_id: guest, nickname: 'Guest', finished_at: null, given_up_at: '2026-11-19T11:59:00.000Z', elapsed_ms: null },
+      { user_id: '44444444-4444-4444-8444-444444444444', nickname: 'Removed Goose', finished_at: null, given_up_at: null, elapsed_ms: null },
+    ],
   };
 }
 
@@ -123,6 +135,54 @@ test('removed result receipts reject identities, outcome conflicts, future dates
     const raw = state(); Object.assign(raw, { removed_results });
     assert.throws(() => parseRoomState(raw), RoomDataError);
   }
+});
+
+test('previous-round results survive roster changes with independent snapshots and legacy null defaults', () => {
+  assert.equal(parseRoomState(state()).previous_round, null);
+  const raw = { ...state(), previous_round: previousRound() };
+  const parsed = parseRoomState(raw);
+  assert.deepEqual(parsed.previous_round, raw.previous_round);
+  assert.equal(parsed.previous_round!.size, 6);
+  assert.equal(parsed.room.size, 5);
+  // Removed participants and old unscored withdrawals remain visible as DNF.
+  assert.equal(parsed.previous_round!.results[2].given_up_at, null);
+  parsed.previous_round!.results[0].nickname = 'Changed';
+  assert.equal(raw.previous_round.results[0].nickname, 'Host');
+  Object.assign(raw, { previous_round: null });
+  assert.equal(parseRoomState(raw).previous_round, null);
+});
+
+test('previous-round results reject current tokens, malformed settings and impossible archive times', () => {
+  for (const patch of [
+    { round_id: roomId }, { round_id: 'invalid' }, { size: 4 }, { size: 9 }, { difficulty: 'Extreme' },
+    { starts_at: null }, { starts_at: 'not a date' }, { starts_at: '2026-11-19T12:00:00.000Z' },
+    { finished_at: null }, { finished_at: '2026-11-19T12:00:02.000Z' }, { results: null }, { results: {} },
+    { solution: [1] }, { seed: 'hidden' }, { generation: {} }, { values: [1] }, { notes: [[]] }, { chat: ['hello'] },
+  ]) {
+    assert.throws(() => parseRoomState({ ...state(), previous_round: { ...previousRound(), ...patch } }), RoomDataError);
+  }
+  for (const value of [false, 1, '', []]) assert.throws(() => parseRoomState({ ...state(), previous_round: value }), RoomDataError);
+});
+
+test('previous-round outcome rows reject identity, score, date and hidden-data corruption', () => {
+  const result = previousRound().results[0];
+  for (const patch of [
+    { user_id: 'invalid' }, { nickname: 'A' }, { nickname: ' Host ' },
+    { finished_at: 'invalid' }, { finished_at: '2026-11-19T11:54:59.000Z' }, { finished_at: '2026-11-19T11:59:01.000Z' },
+    { elapsed_ms: -1 }, { elapsed_ms: 1.5 }, { elapsed_ms: Infinity }, { elapsed_ms: Number.MAX_SAFE_INTEGER + 1 }, { elapsed_ms: null },
+    { given_up_at: '2026-11-19T11:59:00.000Z' }, { finished_at: null },
+    { values: [1] }, { notes: [[]] }, { solution: [1] }, { metadata: { seed: 'hidden' } },
+  ]) {
+    assert.throws(() => parseRoomState({ ...state(), previous_round: { ...previousRound(), results: [{ ...result, ...patch }] } }), RoomDataError);
+  }
+  for (const given_up_at of ['invalid', '2026-11-19T11:54:59.000Z', '2026-11-19T11:59:01.000Z']) {
+    assert.throws(() => parseRoomState({ ...state(), previous_round: { ...previousRound(), results: [{ ...previousRound().results[1], given_up_at }] } }), RoomDataError);
+  }
+  const duplicate = { ...result, user_id: host.toUpperCase() };
+  assert.throws(() => parseRoomState({ ...state(), previous_round: { ...previousRound(), results: [result, duplicate] } }), RoomDataError);
+  // Archive entries are separate from concurrent room capacity.
+  const receipts = Array.from({ length: 9 }, (_, index) => ({ ...result, user_id: `${String(index + 1).padStart(8, '0')}-1111-4111-8111-111111111111` }));
+  assert.equal(parseRoomState({ ...state(), previous_round: { ...previousRound(), results: receipts } }).previous_round!.results.length, 9);
 });
 
 test('lobbies and countdowns cannot expose board clues through either public puzzle or private progress', () => {

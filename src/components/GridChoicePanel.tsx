@@ -43,7 +43,6 @@ export default function GridChoicePanel({ snapshot, userId, busy, onVote, onAppl
   const id = useId();
   const isHost = room.host_id === userId;
   const canVote = Boolean(own?.active);
-  const finished = room.status === 'finished';
   const host = players.find(player => player.user_id === room.host_id);
   const active = players.filter(player => player.active);
   const tallies = useMemo(() => {
@@ -63,12 +62,12 @@ export default function GridChoicePanel({ snapshot, userId, busy, onVote, onAppl
   const tied = leadingCount > 0 && tallies.filter(tally => tally.names.length === leadingCount).length > 1;
   const unchanged = sameChoice(hostChoice, current);
 
-  if (room.status !== 'lobby' && !finished) return null;
+  if (room.status !== 'lobby') return null;
 
   return <section id="room-grid-choice" className="grid-choice-panel" aria-labelledby={`${id}-title`} aria-busy={busy} tabIndex={-1}>
     <div className="grid-choice-heading">
-      <div><span className="eyebrow"><Vote size={15} /> A SHARED CHOICE</span><h2 id={`${id}-title`}>{finished ? 'What shall we solve next?' : 'Choose your shared grid.'}</h2><p>Vote for a size and difficulty. The host has the final say.</p></div>
-      <div className="grid-choice-current"><span>{finished ? 'Last grid' : 'Current grid'}</span><strong><Grid2X2 size={17} />{choiceName(current)}</strong></div>
+      <div><span className="eyebrow"><Vote size={15} /> A SHARED CHOICE</span><h2 id={`${id}-title`}>Choose your shared grid.</h2><p>Vote for a size and difficulty. The host has the final say.</p></div>
+      <div className="grid-choice-current"><span>Current grid</span><strong><Grid2X2 size={17} />{choiceName(current)}</strong></div>
     </div>
 
     <div className="grid-choice-columns">
@@ -87,11 +86,11 @@ export default function GridChoicePanel({ snapshot, userId, busy, onVote, onAppl
       </div>
     </div>
 
-    {isHost ? <form className="grid-choice-host" onSubmit={event => { event.preventDefault(); if (!busy && (finished || !unchanged)) onApply({ ...hostChoice }); }}>
+    {isHost ? <form className="grid-choice-host" onSubmit={event => { event.preventDefault(); if (!busy && !unchanged) onApply({ ...hostChoice }); }}>
       <div className="grid-choice-host-heading"><span><Crown size={19} /><strong>Your final choice</strong></span><p>Use a room suggestion or choose any grid.</p></div>
       <fieldset disabled={busy}><legend>Host board size</legend><div className="grid-choice-sizes">{SIZES.map(size => <label className="grid-choice-option" key={size}><input type="radio" name={`${id}-host-size`} value={size} checked={hostChoice.size === size} onChange={() => setHostChoice(choice => ({ ...choice, size }))} /><span>{size} × {size}</span></label>)}</div></fieldset>
       <fieldset disabled={busy}><legend>Host difficulty</legend><div className="grid-choice-levels">{LEVELS.map(difficulty => <label className="grid-choice-option" key={difficulty}><input type="radio" name={`${id}-host-level`} value={difficulty} checked={hostChoice.difficulty === difficulty} onChange={() => setHostChoice(choice => ({ ...choice, difficulty }))} /><span>{difficulty}</span></label>)}</div></fieldset>
-      <div className="grid-choice-apply"><button className="primary-button" type="submit" disabled={busy || (!finished && unchanged)}><Grid2X2 size={17} />{finished ? 'Create next game' : 'Apply grid'}</button><p>{!finished && unchanged ? 'This grid is selected. Everyone can ready up to start.' : 'A fresh puzzle, then everyone readies up again.'}</p></div>
+      <div className="grid-choice-apply"><button className="primary-button" type="submit" disabled={busy || unchanged}><Grid2X2 size={17} />Apply grid</button><p>{unchanged ? 'This grid is selected. Everyone can ready up to start.' : 'Changing the grid clears everyone’s ready status.'}</p></div>
     </form> : <p className="grid-choice-host-note"><Crown size={17} /><span>{host?.nickname ?? 'The host'} chooses the final grid. You’ll stay in this room for the next game.</span></p>}
     {busy && <p className="grid-choice-busy" role="status">Updating the room…</p>}
   </section>;

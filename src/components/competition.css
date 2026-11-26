@@ -1,6 +1,32 @@
 .arena-shell {
   min-height:100svh
 }
+.arena-previous-results {border:1px solid var(--line);border-radius:13px;background:var(--surface);margin-bottom:24px;overflow:hidden}
+.arena-previous-results summary {display:flex;align-items:center;gap:10px;padding:18px 22px;cursor:pointer;list-style:none;color:var(--accent);font-size:16px}
+.arena-previous-results summary::-webkit-details-marker {display:none}
+.arena-previous-results summary::after {content:'+';font-size:22px;margin-left:auto}
+.arena-previous-results[open] summary::after {content:'−'}
+.arena-previous-results summary>span {font-size:14px;font-weight:400;color:var(--muted);margin-left:8px}
+.arena-previous-results-content {padding:0 22px 18px}
+.arena-previous-results-content>p {color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:15px}
+.arena-previous-results table {width:100%;border-collapse:collapse;font-size:15px;text-align:left}
+.arena-previous-results th,.arena-previous-results td {padding:12px 10px;border-bottom:1px solid var(--line)}
+.arena-previous-results thead th {font-size:14px;color:var(--muted);font-weight:500}
+.arena-previous-results tbody th {font-weight:550;overflow-wrap:anywhere}
+.arena-previous-results tbody tr:last-child>* {border-bottom:0}
+.arena-previous-results tbody tr.is-you {background:var(--soft)}
+.arena-previous-results tbody th small {font-size:12px;font-weight:400;color:var(--muted);margin-left:8px}
+.arena-previous-results td:first-child {width:70px;color:var(--accent)}
+.arena-previous-results td:last-child {font-variant-numeric:tabular-nums;white-space:nowrap}
+.arena-next-round {display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:12px}
+.arena-next-round>p {font-size:16px;line-height:1.7}
+@media(max-width:600px) {
+  .arena-previous-results summary {padding:15px 16px;flex-wrap:wrap;gap:8px}
+  .arena-previous-results summary>span {order:2;flex-basis:100%;margin-left:27px}
+  .arena-previous-results-content {padding:0 12px 14px}
+  .arena-previous-results th,.arena-previous-results td {padding:11px 7px;font-size:14px}
+  .arena-previous-results td:first-child {width:40px}
+}
 .arena-header {
   gap:55px
 }
@@ -1260,6 +1286,19 @@
 .arena-spectator-board .cell {
   cursor:default
 }
+.arena-spectator-actions {display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.arena-compare-button {display:inline-flex;align-items:center;gap:7px;min-height:37px;padding:8px 11px;font-size:14px;line-height:1.5}
+.arena-compare-button small {font-size:11px;color:var(--muted)}
+.arena-compare-button[aria-pressed=true] {background:var(--soft);border-color:var(--accent)}
+.arena-comparison-summary {padding:13px 15px;border:1px solid var(--line);border-radius:9px;background:var(--bg);margin-bottom:16px}
+.arena-comparison-summary p {display:flex;flex-wrap:wrap;gap:8px 18px;font-size:14px;font-weight:550;color:var(--accent);font-variant-numeric:tabular-nums}
+.arena-comparison-summary .arena-comparison-different {color:#916026}
+.arena-comparison-summary small {display:block;margin-top:7px;font-size:13px;line-height:1.7;color:var(--muted)}
+.arena-spectator-board .cell.comparison-matching {background:var(--soft)!important}
+.arena-spectator-board .cell.comparison-different {background:color-mix(in srgb,var(--surface) 78%,#d8a357)!important}
+.arena-spectator-board .cell.comparison-different .cell-mistake-cross {stroke:#916026}
+:root[data-theme=dark] .arena-comparison-summary .arena-comparison-different {color:#edc183}
+:root[data-theme=dark] .arena-spectator-board .cell.comparison-different .cell-mistake-cross {stroke:#edc183}
 .arena-spectator-placeholder {
   aspect-ratio:1;
   min-height:220px;

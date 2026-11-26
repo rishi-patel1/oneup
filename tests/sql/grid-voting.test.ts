@@ -18,6 +18,7 @@ const files=readdirSync(directory).filter(name=>name.endsWith('.sql')).sort();
 const migrations=files.map(name=>readFileSync(new URL(name,directory),'utf8')).join('\n');
 const votingMigration=readFileSync(new URL(files.find(name=>name.endsWith('_numora_grid_voting.sql'))!,directory),'utf8');
 const membershipMigration=readFileSync(new URL(files.find(name=>name.endsWith('_numora_room_spectators_and_kicks.sql'))!,directory),'utf8');
+const previousResultsMigration=readFileSync(new URL(files.find(name=>name.endsWith('_numora_previous_round_results.sql'))!,directory),'utf8');
 type State={room:{id:string;round_id:string;code:string;host_id:string;status:string;size:number;difficulty:string;starts_at:string|null;paused_at:string|null;resumes_at:string|null;paused_ms:number;pause_id:string|null;pause_version:number};players:{user_id:string;nickname:string;active:boolean;ready:boolean;resume_ready:boolean;progress_count:number;finished_at:string|null;given_up_at:string|null;elapsed_ms:number|null;grid_vote:{size:number;difficulty:string}|null}[];self:{values:number[];notes:number[][]}|null;puzzle:unknown;server_now:string};
 
 test('grid votes are scoped advisory choices and only the host can apply a fresh grid',async t=>{
@@ -147,7 +148,7 @@ test('grid votes are scoped advisory choices and only the host can apply a fresh
    await start();await release();for(const id of players)await giveUp(id);
    state=await read();assert.ok(state.players.every(p=>p.grid_vote===null));
    state=await vote(THIRD,7,'Medium','finished');const before=withoutTime(state);
-   await db.exec(votingMigration);await db.exec(membershipMigration);assert.deepEqual(withoutTime(await read()),before);
+   await db.exec(votingMigration);await db.exec(membershipMigration);await db.exec(previousResultsMigration);assert.deepEqual(withoutTime(await read()),before);
    await db.exec(migrations);assert.deepEqual(withoutTime(await read()),before);
    await assert.rejects(user(HOST,()=>rpc('public.numora_prepare_room_grid',[HOST,code,round,'finished',JSON.stringify(first)],['','','','','::jsonb'])),/permission denied/);
   });

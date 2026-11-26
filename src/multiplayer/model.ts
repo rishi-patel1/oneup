@@ -31,6 +31,24 @@ export interface RoomResult {
   removed_at: string;
 }
 
+/** Public outcomes of the last archived round, independent of today's roster. */
+export interface PreviousRoundResult {
+  user_id: string;
+  nickname: string;
+  finished_at: string | null;
+  given_up_at: string | null;
+  elapsed_ms: number | null;
+}
+
+export interface PreviousRound {
+  round_id: string;
+  size: 5 | 6 | 7 | 8;
+  difficulty: Difficulty;
+  starts_at: string;
+  finished_at: string;
+  results: PreviousRoundResult[];
+}
+
 /** Solved and given-up players no longer take part in the current race. */
 export function isPlayerDone(player: Pick<RoomPlayer, 'finished_at' | 'given_up_at'>): boolean {
   return player.finished_at !== null || player.given_up_at !== null;
@@ -55,6 +73,7 @@ export interface RoomState {
   };
   players: RoomPlayer[];
   removed_results: RoomResult[];
+  previous_round: PreviousRound | null;
   self: { values: number[]; notes: number[][] } | null;
   puzzle: PublicPuzzle | null;
   server_now: string;
@@ -180,6 +199,36 @@ function compareDates(left: string, right: string): number {
   if (milliseconds !== 0) return milliseconds;
   const fraction = (value: string) => Number((/\.(\d+)(?:z|[+-]\d\d:?\d\d)$/i.exec(value)?.[1] ?? '').slice(3, 9).padEnd(6, '0'));
   return fraction(left) - fraction(right);
+}
+
+/** Archived standings contain outcomes only; a retired round never supplies a board. */
+function parsePreviousRound(raw: unknown, currentRoundId: string, serverNow: string): PreviousRound | null {
+  if (raw === undefined || raw === null) return null;
+  ensure(record(raw) && Object.keys(raw).every(key => ['round_id', 'size', 'difficulty', 'starts_at', 'finished_at', 'results'].includes(key)));
+  ensure(isUuid(raw.round_id) && raw.round_id.toLowerCase() !== currentRoundId.toLowerCase());
+  ensure(sizes.includes(raw.size as number) && levels.includes(raw.difficulty as Difficulty));
+  ensure(date(raw.starts_at) && date(raw.finished_at) && compareDates(raw.starts_at, raw.finished_at) <= 0 && compareDates(raw.finished_at, serverNow) <= 0);
+  ensure(Array.isArray(raw.results));
+  const results: PreviousRoundResult[] = [];
+  const userIds = new Set<string>();
+  for (const candidate of raw.results) {
+    ensure(record(candidate) && Object.keys(candidate).every(key => ['user_id', 'nickname', 'finished_at', 'given_up_at', 'elapsed_ms'].includes(key)));
+    ensure(isUuid(candidate.user_id) && typeof candidate.nickname === 'string');
+    const userId = candidate.user_id.toLowerCase();
+    ensure(!userIds.has(userId));
+    let nickname: string;
+    try { nickname = normalizeNickname(candidate.nickname); } catch { throw new RoomDataError(); }
+    ensure(nickname === candidate.nickname);
+    const solved = date(candidate.finished_at) && candidate.given_up_at === null && whole(candidate.elapsed_ms, 0, Number.MAX_SAFE_INTEGER);
+    // Old archives can lack a give-up timestamp for an unscored departed player.
+    const dnf = candidate.finished_at === null && (candidate.given_up_at === null || date(candidate.given_up_at)) && candidate.elapsed_ms === null;
+    ensure(solved || dnf);
+    const outcome = solved ? candidate.finished_at as string : candidate.given_up_at as string | null;
+    if (outcome !== null) ensure(compareDates(raw.starts_at, outcome) <= 0 && compareDates(outcome, raw.finished_at) <= 0);
+    userIds.add(userId);
+    results.push({ user_id: userId, nickname, finished_at: candidate.finished_at as string | null, given_up_at: candidate.given_up_at as string | null, elapsed_ms: candidate.elapsed_ms as number | null });
+  }
+  return { round_id: raw.round_id.toLowerCase(), size: raw.size as PreviousRound['size'], difficulty: raw.difficulty as Difficulty, starts_at: raw.starts_at, finished_at: raw.finished_at, results };
 }
 
 /** Only current-room message text and server identities may cross the chat boundary. */
@@ -366,6 +415,7 @@ export function parseRoomState(raw: unknown, viewerId?: string): RoomState {
     try { self = normalizeProgress(raw.self.values, raw.self.notes); } catch { throw new RoomDataError(); }
     ensure(self.values.length === count && puzzle.givens.every((value, index) => value === 0 || self!.values[index] === value));
   }
+  const previousRound = parsePreviousRound(raw.previous_round, (source.round_id ?? source.id) as string, raw.server_now);
   return {
     room: {
       id: source.id, round_id: (source.round_id ?? source.id) as string, code, host_id: source.host_id, status: source.status, size,
@@ -373,6 +423,6 @@ export function parseRoomState(raw: unknown, viewerId?: string): RoomState {
       paused_at: pausedAt, resumes_at: resumesAt, paused_ms: pausedMs, pause_id: pauseId, pause_version: pauseVersion,
       created_at: source.created_at,
     },
-    players, removed_results: removedResults, puzzle, self, server_now: raw.server_now,
+    players, removed_results: removedResults, previous_round: previousRound, puzzle, self, server_now: raw.server_now,
   };
 }

@@ -6,7 +6,7 @@ import {
   normalizeRoomCode, parseRoomChat, parseRoomState, parseSpectatorState, type GridVotePhase, type PublicPuzzle, type RoomChatState, type RoomState, type SpectatorState,
 } from './model';
 
-export type { ChatMessage, GridChoice, GridVotePhase, PublicPuzzle, RoomChatState, RoomPlayer, RoomResult, RoomState, SpectatorState } from './model';
+export type { ChatMessage, GridChoice, GridVotePhase, PreviousRound, PreviousRoundResult, PublicPuzzle, RoomChatState, RoomPlayer, RoomResult, RoomState, SpectatorState } from './model';
 export { isPlayerDone, normalizeChatMessage } from './model';
 export { isSupabaseConfigured };
 
