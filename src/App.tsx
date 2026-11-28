@@ -4,6 +4,7 @@ import {
   Pause, Pencil, Play, Redo2, RotateCcw, Sparkles, Sun, Trophy, Undo2, X,
 } from 'lucide-react';
 import { getMistakes, getSegments, isSolved } from './game/engine';
+import { isArrowKey, nextEditableCell } from './game/board-navigation';
 import { PUZZLES } from './game/puzzles';
 import { createSession, restoreSession, serializeSession, sessionReducer } from './game/session';
 import type { Puzzle } from './game/engine';
@@ -287,13 +288,9 @@ export default function App() {
       } else if (event.key.toLowerCase() === 'n') {
         event.preventDefault();
         if (!event.repeat) setPreferences(p => ({ ...p, notesMode: !p.notesMode }));
-      } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) && isPlaying) {
+      } else if (isArrowKey(event.key) && isPlaying) {
         event.preventDefault();
-        const row = Math.floor(selected / puzzle.size), col = selected % puzzle.size;
-        const next = event.key === 'ArrowLeft' ? row * puzzle.size + Math.max(0, col - 1)
-          : event.key === 'ArrowRight' ? row * puzzle.size + Math.min(puzzle.size - 1, col + 1)
-          : event.key === 'ArrowUp' ? Math.max(0, row - 1) * puzzle.size + col
-          : Math.min(puzzle.size - 1, row + 1) * puzzle.size + col;
+        const next = nextEditableCell(puzzle, selected, event.key);
         setSelected(next);
         boardRef.current?.querySelector<HTMLButtonElement>(`[data-cell="${next}"]`)?.focus();
       }

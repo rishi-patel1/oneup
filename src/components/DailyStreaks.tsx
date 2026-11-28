@@ -57,6 +57,6 @@ export default function DailyStreaks({ date, completion, isGoogle, onSignIn }: P
     <p className="daily-streak-caption">{caption}</p>
     {!isGoogle && <button className="daily-streak-signin" onClick={onSignIn}>Sign in with Google</button>}
     {isGoogle && failed && <p className="daily-streak-error" role="status">Couldn’t update your streaks. <button disabled={loading} onClick={() => refresh.current()}><RefreshCw size={12} />{loading ? 'Retrying…' : 'Retry'}</button></p>}
-    <p className="daily-streak-rule">Ranked daily finishes · UTC days</p>
+    <p className="daily-streak-rule">Ranked daily finishes · Consecutive puzzle days</p>
   </section>;
 }

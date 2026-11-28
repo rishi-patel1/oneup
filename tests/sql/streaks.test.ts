@@ -12,7 +12,7 @@ const directory = new URL('../../supabase/migrations/', import.meta.url);
 const files = readdirSync(directory).filter(name => name.endsWith('.sql')).sort();
 const migration = files.map(name => readFileSync(new URL(name, directory), 'utf8')).join('\n');
 
-test('daily streaks derive private ranked history with UTC grace and calendar boundaries', async t => {
+test('daily streaks derive private ranked history with daily-period grace and calendar boundaries', async t => {
   const db = new PGlite();
   try {
     await db.exec(`
@@ -44,7 +44,7 @@ test('daily streaks derive private ranked history with UTC grace and calendar bo
     };
     const rpc = async () => (await db.query<{ data: Streaks }>('select public.numora_daily_streaks() as data')).rows[0].data;
     const read = (id: string) => role('authenticated', id, rpc);
-    const today = (await db.query<{ date: string }>("select (clock_timestamp() at time zone 'UTC')::date::text as date")).rows[0].date;
+    const today = (await db.query<{ date: string }>("select numora_private.daily_day(clock_timestamp())::text as date")).rows[0].date;
     const date = (offset: number) => new Date(Date.parse(today) + offset * 86400000).toISOString().slice(0, 10);
     const add = async (id: string, day: string, ranked = true, finished = true) => {
       // Trusted history fixture avoids changing production clocks or waiting days.
@@ -94,7 +94,7 @@ test('daily streaks derive private ranked history with UTC grace and calendar bo
       await add(C, date(1));
       assert.equal((await read(C)).last_completed_date, '2021-01-04');
     });
-    await t.test('UTC results ignore database timezone, are read-only, and survive migration reapply', async () => {
+    await t.test('Daily-period results ignore database timezone, are read-only, and survive migration reapply', async () => {
       const before = (await db.query('select to_jsonb(a) as row from numora_private.daily_attempts a order by a.id')).rows;
       const expected = await read(A);
       for (const zone of ['Pacific/Kiritimati', 'Pacific/Honolulu']) {
@@ -105,6 +105,7 @@ test('daily streaks derive private ranked history with UTC grace and calendar bo
       assert.deepEqual((await db.query('select to_jsonb(a) as row from numora_private.daily_attempts a order by a.id')).rows, before);
       const streakFile = files.find(name => name.endsWith('_numora_daily_streaks.sql'))!;
       await db.exec(readFileSync(new URL(streakFile, directory), 'utf8'));
+      await db.exec(readFileSync(new URL(files.find(name=>name.endsWith('_numora_daily_reset_ist.sql'))!,directory),'utf8'));
       assert.deepEqual(await read(A), expected);
       await assert.rejects(role('authenticated', A, () => db.query('select * from numora_private.daily_attempts')), /permission denied/);
       const funcs = (await db.query<{ schema: string; definer: boolean; config: string[] }>(`select n.nspname as schema,p.prosecdef as definer,p.proconfig as config

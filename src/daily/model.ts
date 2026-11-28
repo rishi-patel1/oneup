@@ -18,10 +18,24 @@ export function getDailyElapsed(attempt: DailyAttempt, serverNow: number): numbe
   return attempt.elapsed_ms ?? Math.max(0, clock - Date.parse(attempt.started_at) - attempt.paused_ms);
 }
 
-/** A late poll must not undo a pause, resume, or confirmed finish. */
+function resetSchedule(state: DailyState): 'legacy' | 'ist' | null {
+  const start = Date.parse(`${state.date}T00:00:00Z`);
+  const reset = Date.parse(state.resets_at);
+  return reset === start + 86_400_000 ? 'legacy' : reset === start + 100_800_000 ? 'ist' : null;
+}
+
+/** A late poll must not undo a pause, resume, finish, or accepted reset schedule. */
 export function isCurrentDailySnapshot(previous: DailyState | null, next: DailyState, lastServerTime: number): boolean {
   if (!previous) return true;
-  if (next.date < previous.date || (next.date === previous.date && Date.parse(next.server_now) < lastServerTime)) return false;
+  const server = Date.parse(next.server_now), previousSchedule = resetSchedule(previous), nextSchedule = resetSchedule(next);
+  // Once the new schedule is accepted, even a later legacy response cannot
+  // reopen it (before 04:00 a legacy response can carry a larger date label).
+  if (previousSchedule === 'ist' && nextSchedule === 'legacy') return false;
+  const changedSchedule = previousSchedule === 'legacy' && nextSchedule === 'ist';
+  const priorLabel = Date.parse(`${previous.date}T00:00:00Z`) - Date.parse(`${next.date}T00:00:00Z`) === 86_400_000;
+  const currentWindow = server >= Date.parse(`${next.date}T04:00:00Z`) && server < Date.parse(next.resets_at);
+  const scheduleCorrection = changedSchedule && priorLabel && currentWindow && server > Math.max(lastServerTime, Date.parse(previous.server_now));
+  if ((next.date < previous.date && !scheduleCorrection) || (next.date === previous.date && server < lastServerTime)) return false;
   if (previous.attempt && next.attempt?.id === previous.attempt.id) {
     if (next.attempt.timing_version < previous.attempt.timing_version) return false;
     if (previous.attempt.finished_at && !next.attempt.finished_at) return false;
@@ -106,8 +120,14 @@ export function parseDailyState(raw: unknown): DailyState {
   object(raw, ['date', 'resets_at', 'server_now', 'daily', 'puzzle', 'attempt', 'profile']);
   const date = day(raw.date); ensure(timestamp(raw.server_now) && timestamp(raw.resets_at));
   const server = Date.parse(raw.server_now), reset = Date.parse(raw.resets_at);
-  const midnight = Date.parse(`${date}T00:00:00Z`);
-  ensure(server >= midnight && server < midnight + 86_400_000 && reset === midnight + 86_400_000);
+  const calendarStart = Date.parse(`${date}T00:00:00Z`);
+  // A challenge day starts at 04:00 UTC, which is 09:30 India Standard Time.
+  const opens = calendarStart + 4 * 60 * 60 * 1000;
+  const currentWindow = reset === opens + 86_400_000 && server >= opens && server < reset;
+  // Accept the complete former schedule while the frontend is deployed before
+  // the backend switch. Never combine one schedule's deadline with the other.
+  const legacyWindow = reset === calendarStart + 86_400_000 && server >= calendarStart && server < reset;
+  ensure(currentWindow || legacyWindow);
   const profile = raw.profile === null ? null : parseProfile(raw.profile);
   let daily: DailyState['daily'] = null;
   if (raw.daily !== null) {
@@ -121,7 +141,9 @@ export function parseDailyState(raw: unknown): DailyState {
     const source = raw.attempt;
     object(source, ['id', 'started_at', 'finished_at', 'elapsed_ms', 'ranked', 'values', 'notes', 'paused_at', 'paused_ms', 'timing_version']);
     ensure(isUuid(source.id) && timestamp(source.started_at) && typeof source.ranked === 'boolean');
-    const started = Date.parse(source.started_at); ensure(started >= midnight && started <= server);
+    // Attempts created before the reset-time change may predate 04:00 on this
+    // calendar date. Keep their accepted progress and finish times readable.
+    const started = Date.parse(source.started_at); ensure(started >= calendarStart && started <= server);
     const hasTiming = ['paused_at', 'paused_ms', 'timing_version'].some(key => key in source);
     const pausedAt = hasTiming ? source.paused_at : null;
     const pausedMs = hasTiming ? source.paused_ms : 0;

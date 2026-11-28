@@ -8,6 +8,7 @@ import RoomChat from './RoomChat';
 import PreviousRoundResults from './PreviousRoundResults';
 import type { Difficulty, Puzzle } from '../game/engine';
 import { getMistakes, getSegments, isSolved } from '../game/engine';
+import { isArrowKey, nextEditableCell } from '../game/board-navigation';
 import { createSession, restoreSession, serializeSession, sessionReducer, type Session, type SessionAction } from '../game/session';
 import { createRoomSnapshotGate, getRoomTiming, isPlayerDone, type PreviousRound } from '../multiplayer/model';
 import { compareBoards } from '../multiplayer/board-comparison';
@@ -377,10 +378,9 @@ function RoomScreen({ snapshot, userId, serverNow, presence, onSnapshot, onRoomU
       if (number !== null) { event.preventDefault(); if (!event.repeat) enterNumber(number, notesMode || event.shiftKey); }
       else if (['Backspace', 'Delete', '0'].includes(event.key)) { event.preventDefault(); edit({ type: 'clear-cell', index: selected, puzzle }); }
       else if (event.key.toLowerCase() === 'n') { event.preventDefault(); if (!event.repeat) setNotesMode(value => !value); }
-      else if (event.key.startsWith('Arrow')) {
+      else if (isArrowKey(event.key)) {
         event.preventDefault();
-        const row = Math.floor(selected / puzzle.size), column = selected % puzzle.size;
-        const next = event.key === 'ArrowLeft' ? row * puzzle.size + Math.max(0, column - 1) : event.key === 'ArrowRight' ? row * puzzle.size + Math.min(puzzle.size - 1, column + 1) : event.key === 'ArrowUp' ? Math.max(0, row - 1) * puzzle.size + column : Math.min(puzzle.size - 1, row + 1) * puzzle.size + column;
+        const next = nextEditableCell(puzzle, selected, event.key);
         setSelected(next); boardRef.current?.querySelector<HTMLButtonElement>(`[data-race-cell="${next}"]`)?.focus();
       }
     };

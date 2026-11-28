@@ -14,7 +14,7 @@ const own=readFileSync(new URL(files.find(f=>f.endsWith('_numora_daily_pauses.sq
 type Attempt={id:string;started_at:string;finished_at:string|null;elapsed_ms:number|null;ranked:boolean;values:number[];notes:number[][];paused_at:string|null;paused_ms:number;timing_version:number};
 type State={date:string;resets_at:string;server_now:string;attempt:Attempt|null;puzzle:unknown;daily:unknown;profile:unknown};
 
-test('daily pause clocks persist, reject stale writes, and preserve UTC deadlines',async t=>{
+test('daily pause clocks persist, reject stale writes, and preserve 9:30 AM IST deadlines',async t=>{
  const db=new PGlite();
  try {
   await db.exec(`create role anon;create role authenticated;create role service_role;
@@ -34,7 +34,7 @@ test('daily pause clocks persist, reject stale writes, and preserve UTC deadline
   const user=<T>(id:string,action:()=>Promise<T>)=>run('authenticated',id,action);
   const query=async<T>(stmt:string,args:unknown[]=[])=> (await db.query<{data:T}>(`${stmt} as data`,args)).rows[0].data;
   const current=()=>query<State>('select public.numora_get_daily_timed()');
-  const today=await query<string>("select (clock_timestamp() at time zone 'UTC')::date::text");
+  const today=await query<string>("select numora_private.daily_day(clock_timestamp())::text");
   await run('service_role',null,()=>query('select public.numora_ensure_daily($1,$2::jsonb)',[today,JSON.stringify(puzzle)]));
   const a=await user(A,()=>query<State>('select public.numora_start_daily_timed()'));
   const b=await user(B,()=>query<State>('select public.numora_start_daily_timed()'));
@@ -91,7 +91,7 @@ test('daily pause clocks persist, reject stale writes, and preserve UTC deadline
    await user(A,()=>pause(false,3));
    const replay=await user(A,()=>pause(false,4));assert.equal(replay.attempt!.timing_version,4);
   });
-  await t.test('pauses cannot extend the UTC day or target another day',async()=>{
+  await t.test('pauses cannot extend the daily period or target another day',async()=>{
    for(const offset of[-1,1]){
     const date=new Date(Date.parse(today)+offset*86400000).toISOString().slice(0,10);
     await assert.rejects(user(A,()=>pause(true,4,attemptId,date)),/expired/);

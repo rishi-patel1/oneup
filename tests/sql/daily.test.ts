@@ -66,7 +66,7 @@ const platform = `
   $$;
 `;
 
-test('daily SQL: shared UTC puzzles, Google ranking, private profiles, and accepted friends', async t => {
+test('daily SQL: shared 9:30 AM IST puzzles, Google ranking, private profiles, and accepted friends', async t => {
   const db = new PGlite();
   try {
     await db.exec(platform);
@@ -87,7 +87,7 @@ test('daily SQL: shared UTC puzzles, Google ranking, private profiles, and accep
     const cancel = (id: string) => query<Friends>('select public.numora_cancel_friend_request($1) as data', [id]);
     const remove = (id: string) => query<Friends>('select public.numora_remove_friend($1) as data', [id]);
     const board = (date: string | null = null, scope = 'global') => query<Board>('select public.numora_daily_leaderboard($1::date,$2) as data', [date, scope]);
-    const today = await query<string>("select (clock_timestamp() at time zone 'UTC')::date::text as data");
+    const today = await query<string>("select numora_private.daily_day(clock_timestamp())::text as data");
     const previous = new Date(Date.parse(today) - 86400000).toISOString().slice(0, 10);
     const next = new Date(Date.parse(today) + 86400000).toISOString().slice(0, 10);
     const write = (values: number[], marks = notes, submit = false, date = today) => query<DailyState>(
@@ -115,8 +115,8 @@ test('daily SQL: shared UTC puzzles, Google ranking, private profiles, and accep
       profileA = s.profile!;
       assert.equal(s.daily, null); assert.equal(s.puzzle, null); assert.equal(s.attempt, null);
       assert.equal(s.date, today);
-      assert.equal(new Date(s.resets_at).toISOString(), `${next}T00:00:00.000Z`);
-      assert.equal(new Date(s.server_now).toISOString().slice(0, 10), today);
+      assert.equal(new Date(s.resets_at).toISOString(), `${next}T04:00:00.000Z`);
+      assert.equal(new Date(Date.parse(s.server_now)-4*3600000).toISOString().slice(0, 10), today);
       assert.match(profileA.friend_code, /^[A-F0-9]{10}$/);
       assert.match(profileA.display_name, /^[A-Z][a-z]+[A-Z][a-z]+$/);
       assert.ok(profileA.display_name.length <= 24);
@@ -127,11 +127,11 @@ test('daily SQL: shared UTC puzzles, Google ranking, private profiles, and accep
       await assert.rejects(user(A, start), /being prepared/);
     });
 
-    await t.test('service-only ensure validates UTC date and puzzle integrity and never replaces a day', async () => {
+    await t.test('service-only ensure validates daily date and puzzle integrity and never replaces a day', async () => {
       await assert.rejects(user(A, () => db.query('select public.numora_ensure_daily($1::date,$2::jsonb)', [today, JSON.stringify(puzzle)])), /permission denied/);
       await assert.rejects(asRole('anon', null, () => db.query('select public.numora_ensure_daily($1::date,$2::jsonb)', [today, JSON.stringify(puzzle)])), /permission denied/);
-      await assert.rejects(ensure(previous), /current UTC/);
-      await assert.rejects(ensure(next), /current UTC/);
+      await assert.rejects(ensure(previous), /current daily/);
+      await assert.rejects(ensure(next), /current daily/);
       await assert.rejects(ensure(today, { ...puzzle, size: 5 }), /valid 6 by 6/);
       await assert.rejects(ensure(today, { ...puzzle, solution: puzzle.solution.map(() => 1) }), /valid 6 by 6/);
       await ensure();
@@ -251,10 +251,10 @@ test('daily SQL: shared UTC puzzles, Google ranking, private profiles, and accep
       assert.equal(ranked.self, null);
     });
 
-    await t.test('UTC date expiry blocks old or future writes and does not reveal historical boards', async () => {
+    await t.test('Daily period expiry blocks old or future writes and does not reveal historical boards', async () => {
       await db.exec("set timezone='Pacific/Honolulu'");
       assert.equal((await user(A, daily)).date, today);
-      assert.equal(new Date((await user(A, daily)).resets_at).toISOString(), `${next}T00:00:00.000Z`);
+      assert.equal(new Date((await user(A, daily)).resets_at).toISOString(), `${next}T04:00:00.000Z`);
       await assert.rejects(user(A, () => write(puzzle.solution, notes, true, previous)), /expired/);
       await assert.rejects(user(A, () => write(puzzle.solution, notes, false, next)), /expired/);
       await assert.rejects(user(A, () => board(next)), /valid daily date/);

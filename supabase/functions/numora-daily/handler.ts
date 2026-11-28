@@ -24,7 +24,7 @@ function safeSnapshot(value: unknown): boolean {
     !['solution', 'seed', 'generation', 'email', 'access_token', 'refresh_token', 'provider_token'].includes(key) && safeSnapshot(child));
 }
 
-/** The database supplies the UTC date; a unique day key chooses one shared board. */
+/** The database supplies the 9:30 AM IST challenge date; its unique key chooses one shared board. */
 export function createDailyHandler(dependencies: Dependencies) {
   const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), {
     status, headers: { ...dependencies.corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' },
@@ -45,7 +45,7 @@ export function createDailyHandler(dependencies: Dependencies) {
         const puzzle = (dependencies.generate ?? generatePuzzle)({ size: 6, difficulty: 'Medium', seed: crypto.randomUUID() });
         try { await dependencies.ensure(state.date, puzzle); }
         catch (cause) {
-          // Midnight can pass while the generator is running. Read the server day again.
+          // The daily reset can pass while the generator is running. Read its server date again.
           const current = await dependencies.getState(token);
           if (current.date !== state.date) { state = current; continue; }
           throw cause;

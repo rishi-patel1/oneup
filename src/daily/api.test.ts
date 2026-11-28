@@ -6,7 +6,7 @@ import { createDailyApi, explainDailyError } from './api';
 const user = '11111111-1111-4111-8111-111111111111', target = 'abcdef12-abcd-4abc-8abc-abcdef123456';
 const date = '2026-11-21';
 const profile = { id: user, display_name: 'Player One', friend_code: 'ABC1234567' };
-const metadata = { date, resets_at: '2026-11-22T00:00:00Z', server_now: `${date}T12:00:00Z`, daily: null, puzzle: null, attempt: null, profile: null };
+const metadata = { date, resets_at: '2026-11-22T04:00:00Z', server_now: `${date}T12:00:00Z`, daily: null, puzzle: null, attempt: null, profile: null };
 const friends = { profile, friends: [], incoming: [], outgoing: [] };
 function mock() {
   let data: unknown = metadata, error: unknown = null, identities = 0;
@@ -36,6 +36,15 @@ test('daily metadata is lazy, checks timed state, and generates only when the da
   ready.respond({ ...metadata, daily: { id: target, date, size: 6, difficulty: 'Medium' } });
   await ready.api.getDailyState();
   assert.deepEqual(ready.calls, [{ name: 'numora_get_daily_timed', args: {} }]);
+});
+
+test('a daily request keeps the database challenge date across UTC midnight until 9:30 AM IST', async () => {
+  const service = mock();
+  service.respond({ ...metadata, server_now: '2026-11-22T03:59:59.999Z', daily: { id: target, date, size: 6, difficulty: 'Medium' } });
+  const state = await service.api.getDailyState();
+  assert.equal(state.date, date);
+  assert.equal(state.resets_at, '2026-11-22T04:00:00Z');
+  assert.deepEqual(service.calls, [{ name: 'numora_get_daily_timed', args: {} }]);
 });
 
 test('daily saves send immutable board snapshots with no client identity, ranking or time claims', async () => {
@@ -68,7 +77,7 @@ test('leaderboard requests enforce response day/scope and forward cancellation',
   await assert.rejects(service.api.getDailyLeaderboard(date, 'friends'), /unexpected data/);
 });
 
-test('streaks request only the current account and bind the response to the UTC day', async () => {
+test('streaks request only the current account and bind the response to the challenge day', async () => {
   const service = mock(), controller = new AbortController();
   const streaks = { date, current: 2, max: 5, completed_today: true, last_completed_date: date };
   service.respond(streaks);

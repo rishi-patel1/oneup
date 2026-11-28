@@ -5,7 +5,7 @@ import { generatePuzzle } from '../../src/game/generator';
 
 const corsHeaders = { 'Access-Control-Allow-Origin': '*' };
 const day = '2026-11-21';
-const initial = (): DailyEdgeState => ({ date: day, daily: null, attempt: null, puzzle: null, profile: null, resets_at: '2026-11-22T00:00:00Z', server_now: '2026-11-21T12:00:00Z' });
+const initial = (): DailyEdgeState => ({ date: day, daily: null, attempt: null, puzzle: null, profile: null, resets_at: '2026-11-22T04:00:00Z', server_now: '2026-11-21T12:00:00Z' });
 const ready = (): DailyEdgeState => ({ ...initial(), daily: { id: '00000000-0000-4000-8000-000000000001' } });
 const request = (body = '{}') => new Request('https://numora.test/daily', { method: 'POST', headers: { Authorization: 'Bearer test-token' }, body });
 
@@ -48,21 +48,25 @@ test('concurrent first visits return the same committed daily chosen by the data
   assert.deepEqual(states[1], ready());
 });
 
-test('a midnight rollover during generation reads the new server date and retries', async () => {
-  let state = initial();
+test('a 9:30 AM IST rollover during generation reads the new server date and retries', async () => {
+  let state: DailyEdgeState = { ...initial(), server_now: '2026-11-22T03:59:59.999Z' };
+  const nextDay = { ...initial(), date: '2026-11-22', server_now: '2026-11-22T04:00:00Z', resets_at: '2026-11-23T04:00:00Z' };
   const dates: string[] = [];
   const handler = createDailyHandler({ corsHeaders, authenticate: async () => 'token', getState: async () => state,
-    generate: () => generatePuzzle({ size: 6, difficulty: 'Medium', seed: 'daily-edge-midnight' }),
+    generate: () => generatePuzzle({ size: 6, difficulty: 'Medium', seed: 'daily-edge-0930-ist' }),
     ensure: async date => {
       dates.push(date);
-      if (date === day) { state = { ...initial(), date: '2026-11-22' }; throw Error('date expired'); }
-      state = { ...ready(), date: '2026-11-22' };
+      if (date === day) { state = nextDay; throw Error('date expired'); }
+      state = { ...nextDay, daily: ready().daily };
     },
   });
   const response = await handler(request());
   assert.equal(response.status, 200);
   assert.deepEqual(dates, [day, '2026-11-22']);
-  assert.equal((await response.json()).date, '2026-11-22');
+  const result = await response.json();
+  assert.equal(result.date, '2026-11-22');
+  assert.equal(result.server_now, '2026-11-22T04:00:00Z');
+  assert.equal(result.resets_at, '2026-11-23T04:00:00Z');
 });
 
 test('authentication, methods, preflight, and internal data redaction protect the daily endpoint', async () => {

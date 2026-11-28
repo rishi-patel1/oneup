@@ -8,7 +8,7 @@ const date = '2026-11-21', now = `${date}T12:00:05.000Z`;
 const profile = { id: user, display_name: 'Player One', friend_code: 'ABC1234567' };
 function daily(started = true) {
   return {
-    date, resets_at: '2026-11-22T00:00:00Z', server_now: now,
+    date, resets_at: '2026-11-22T04:00:00Z', server_now: now,
     daily: { id: dailyId, date, size: 6, difficulty: 'Medium' },
     puzzle: started ? { id: `daily-${dailyId}`, title: 'The shared daily', description: 'A fresh challenge.', size: 6, difficulty: 'Medium', givens: [1, ...Array<number>(35).fill(0)], rightWalls: Array<boolean>(36).fill(false), bottomWalls: Array<boolean>(36).fill(false) } : null,
     attempt: started ? { id: attemptId, started_at: `${date}T12:00:00Z`, finished_at: null as string | null, elapsed_ms: null as number | null, ranked: true, values: [1, ...Array<number>(35).fill(0)], notes: Array.from({ length: 36 }, () => [] as number[]) } : null,
@@ -45,11 +45,62 @@ test('daily dates, names and friend codes normalize safely', () => {
   assert.throws(() => normalizeDisplayName('A'));
 });
 
-test('metadata cannot reveal a board before starting and uses the UTC server day', () => {
+test('metadata cannot reveal a board before starting and uses the 9:30 AM IST challenge day', () => {
   assert.equal(parseDailyState(daily(false)).attempt, null);
   const leaked = daily(false); leaked.puzzle = daily().puzzle;
   assert.throws(() => parseDailyState(leaked), DailyDataError);
   for (const patch of [{ date: '2026-11-20' }, { resets_at: `${date}T23:00:00Z` }, { server_now: 'invalid' }, { daily: null }]) assert.throws(() => parseDailyState({ ...daily(), ...patch }), DailyDataError);
+});
+
+test('the daily label switches exactly at 04:00 UTC, including the next UTC calendar morning', () => {
+  const before = {
+    ...daily(false), date: '2026-11-20',
+    daily: { ...daily(false).daily, date: '2026-11-20' },
+    server_now: `${date}T03:59:59.999999Z`, resets_at: `${date}T04:00:00Z`,
+  };
+  assert.equal(parseDailyState(before).date, '2026-11-20');
+  assert.throws(() => parseDailyState({ ...before, server_now: `${date}T04:00:00Z` }), DailyDataError);
+  const opened = { ...daily(false), server_now: `${date}T04:00:00Z` };
+  assert.equal(parseDailyState(opened).date, date);
+  assert.throws(() => parseDailyState({ ...opened, server_now: `${date}T03:59:59.999Z` }), DailyDataError);
+  assert.equal(parseDailyState({ ...opened, server_now: '2026-11-22T03:59:59.999Z' }).date, date);
+  assert.throws(() => parseDailyState({ ...opened, server_now: '2026-11-22T04:00:00Z' }), DailyDataError);
+  assert.throws(() => parseDailyState({ ...opened, resets_at: '2026-11-22T03:59:59.999Z' }), DailyDataError);
+  assert.equal(parseDailyState({ ...opened, server_now: `${date}T09:30:00+05:30`, resets_at: '2026-11-22T09:30:00+05:30' }).date, date);
+});
+
+test('rolling deployment accepts either complete reset schedule without accepting mixed day windows', () => {
+  const legacy = { ...daily(false), resets_at: '2026-11-22T00:00:00Z' };
+  assert.equal(parseDailyState({ ...legacy, server_now: `${date}T00:00:00Z` }).date, date);
+  assert.equal(parseDailyState({ ...legacy, server_now: `${date}T23:59:59.999Z` }).date, date);
+  assert.throws(() => parseDailyState({ ...legacy, server_now: '2026-11-22T01:00:00Z' }), DailyDataError);
+  assert.throws(() => parseDailyState({ ...daily(false), server_now: `${date}T01:00:00Z` }), DailyDataError);
+  assert.throws(() => parseDailyState({ ...legacy, resets_at: '2026-11-22T05:00:00Z' }), DailyDataError);
+});
+
+test('challenge-day validation crosses year and leap-day boundaries independently of local timezone', () => {
+  for (const [label, afterMidnight] of [['2026-12-31', '2027-01-01'], ['2028-02-29', '2028-03-01']]) {
+    const raw = {
+      ...daily(false), date: label, daily: { ...daily(false).daily, date: label },
+      server_now: `${afterMidnight}T03:59:59.999Z`, resets_at: `${afterMidnight}T04:00:00Z`,
+    };
+    assert.equal(parseDailyState(raw).date, label);
+    assert.throws(() => parseDailyState({ ...raw, server_now: raw.resets_at }), DailyDataError);
+  }
+});
+
+test('existing attempts and accepted finishes before the new opening hour remain readable', () => {
+  const raw = daily();
+  raw.server_now = `${date}T04:00:00Z`;
+  raw.attempt!.started_at = `${date}T00:00:00Z`;
+  assert.equal(parseDailyState(raw).attempt?.started_at, raw.attempt!.started_at);
+  raw.attempt!.started_at = '2026-11-20T23:59:59.999Z';
+  assert.throws(() => parseDailyState(raw), DailyDataError);
+  raw.attempt!.started_at = `${date}T02:00:00Z`;
+  raw.attempt!.values = Array.from({ length: 36 }, (_, i) => (Math.floor(i / 6) + i % 6) % 6 + 1);
+  raw.attempt!.finished_at = `${date}T03:00:00Z`;
+  raw.attempt!.elapsed_ms = 3_600_000;
+  assert.equal(parseDailyState(raw).attempt?.elapsed_ms, 3_600_000);
 });
 
 test('daily drafts preserve fixed clues and notes while accepting conflicting guesses', () => {
@@ -151,4 +202,28 @@ test('same-millisecond late polls cannot undo a daily pause, resume, or confirme
   assert.equal(isCurrentDailySnapshot(resumed,paused,Date.parse(resumed.server_now)),false);
   const finished = structuredClone(resumed); finished.attempt!.finished_at = now;
   assert.equal(isCurrentDailySnapshot(finished,resumed,Date.parse(finished.server_now)),false);
+});
+
+test('a strictly newer schedule correction may move the daily label back once before 04:00 UTC', () => {
+  const metadata = (label: string, server: string, reset: string) => parseDailyState({
+    ...daily(false), date: label, daily: { ...daily(false).daily, date: label }, server_now: server, resets_at: reset,
+  });
+  const legacy = metadata('2026-11-22', '2026-11-22T01:00:00Z', '2026-11-23T00:00:00Z');
+  const current = metadata(date, '2026-11-22T01:00:00.001Z', '2026-11-22T04:00:00Z');
+  assert.equal(isCurrentDailySnapshot(legacy, current, Date.parse(legacy.server_now)), true);
+  assert.equal(isCurrentDailySnapshot(legacy, { ...current, server_now: legacy.server_now }, Date.parse(legacy.server_now)), false);
+  assert.equal(isCurrentDailySnapshot(legacy, { ...current, server_now: '2026-11-22T00:59:59Z' }, Date.parse(legacy.server_now)), false);
+  assert.equal(isCurrentDailySnapshot(legacy, { ...current, date: '2026-11-20', resets_at: '2026-11-21T04:00:00Z' }, Date.parse(legacy.server_now)), false);
+  assert.equal(isCurrentDailySnapshot(current, { ...legacy, server_now: '2026-11-22T01:00:01Z' }, Date.parse(current.server_now)), false);
+  const next = metadata('2026-11-22', '2026-11-22T04:00:00Z', '2026-11-23T04:00:00Z');
+  assert.equal(isCurrentDailySnapshot(current, next, Date.parse(current.server_now)), true);
+  assert.equal(isCurrentDailySnapshot(next, current, Date.parse(next.server_now)), false);
+});
+
+test('same-day deadline extension retires the former schedule even when its response clock is newer', () => {
+  const legacy = parseDailyState({ ...daily(false), resets_at: '2026-11-22T00:00:00Z' });
+  const current = parseDailyState({ ...daily(false), server_now: `${date}T12:00:05.001Z` });
+  assert.equal(isCurrentDailySnapshot(legacy, current, Date.parse(legacy.server_now)), true);
+  const staleSchedule = { ...legacy, server_now: `${date}T12:00:06Z` };
+  assert.equal(isCurrentDailySnapshot(current, staleSchedule, Date.parse(current.server_now)), false);
 });
